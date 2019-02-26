@@ -105,7 +105,7 @@ static int digest_fix(REQUEST *request)
 	/*
 	 *	Check for proper format of the Digest-Attributes
 	 */
-	RDEBUG("Checking for correctly formatted Digest-Attributes");
+	RDEBUG2("Checking for correctly formatted Digest-Attributes");
 	rad_assert(attr_digest_attributes);
 
 	first = fr_cursor_iter_by_da_init(&cursor, &request->packet->vps, attr_digest_attributes);
@@ -127,7 +127,7 @@ static int digest_fix(REQUEST *request)
 			 *	The attribute type must be valid
 			 */
 			if ((p[0] == 0) || (p[0] > 10)) {
-				RDEBUG("Not formatted as Digest-Attributes: subtlv (%u) invalid", (unsigned int) p[0]);
+				RDEBUG2("Not formatted as Digest-Attributes: subtlv (%u) invalid", (unsigned int) p[0]);
 				return RLM_MODULE_NOOP;
 			}
 
@@ -137,7 +137,7 @@ static int digest_fix(REQUEST *request)
 			 *	Too short.
 			 */
 			if (attr_len < 3) {
-				RDEBUG("Not formatted as Digest-Attributes: TLV too short");
+				RDEBUG2("Not formatted as Digest-Attributes: TLV too short");
 				return RLM_MODULE_NOOP;
 			}
 
@@ -145,7 +145,7 @@ static int digest_fix(REQUEST *request)
 			 *	Too long.
 			 */
 			if (p + attr_len > end) {
-				RDEBUG("Not formatted as Digest-Attributes: TLV too long)");
+				RDEBUG2("Not formatted as Digest-Attributes: TLV too long)");
 				return RLM_MODULE_NOOP;
 			}
 
@@ -159,7 +159,7 @@ static int digest_fix(REQUEST *request)
 	/*
 	 *	Convert them to something sane.
 	 */
-	RDEBUG("Digest-Attributes validated, unpacking into interal attributes");
+	RDEBUG2("Digest-Attributes validated, unpacking into interal attributes");
 	fr_cursor_head(&cursor);
 	for (i = fr_cursor_head(&cursor);
 	     i;
@@ -237,14 +237,14 @@ static rlm_rcode_t CC_HINT(nonnull) mod_authenticate(UNUSED void *instance, UNUS
 	passwd = fr_pair_find_by_da(request->control, attr_digest_ha1, TAG_ANY);
 	if (passwd) {
 		if (passwd->vp_length != 32) {
-			RAUTH("Digest-HA1 has invalid length, authentication failed");
+			REDEBUG("Digest-HA1 has invalid length, authentication failed");
 			return RLM_MODULE_INVALID;
 		}
 	} else {
 		passwd = fr_pair_find_by_da(request->control, attr_cleartext_password, TAG_ANY);
 	}
 	if (!passwd) {
-		RAUTH("Cleartext-Password or Digest-HA1 is required for authentication");
+		REDEBUG("Cleartext-Password or Digest-HA1 is required for authentication");
 		return RLM_MODULE_INVALID;
 	}
 

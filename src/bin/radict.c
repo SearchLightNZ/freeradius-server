@@ -54,7 +54,7 @@ static void usage(void)
 	fprintf(stderr, "  -E               Export dictionary definitions.\n");
 	fprintf(stderr, "  -D <dictdir>     Set main dictionary directory (defaults to " DICTDIR ").\n");
 	fprintf(stderr, "  -x               Debugging mode.\n");
-	fprintf(stderr, "");
+	fprintf(stderr, "\n");
 	fprintf(stderr, "Very simple interface to extract attribute definitions from FreeRADIUS dictionaries\n");
 }
 
@@ -133,7 +133,7 @@ static void da_print_info_td(fr_dict_t const *dict, fr_dict_attr_t const *da)
 
 	/* Protocol Name Type */
 	printf("%s\t%s\t%s\t%s\t%s\n", fr_dict_root(dict)->name, oid_str, da->name,
-	       fr_int2str(fr_value_box_type_names, da->type, "?Unknown?"), flags);
+	       fr_int2str(fr_value_box_type_table, da->type, "?Unknown?"), flags);
 }
 
 static void _fr_dict_export(uint64_t *count, uintptr_t *low, uintptr_t *high, fr_dict_attr_t const *da, unsigned int lvl)
@@ -198,7 +198,7 @@ int main(int argc, char *argv[])
 
 	fr_debug_lvl = 1;
 
-	while ((c = getopt(argc, argv, "ED:xh")) != EOF) switch (c) {
+	while ((c = getopt(argc, argv, "ED:xh")) != -1) switch (c) {
 		case 'E':
 			export = true;
 			break;

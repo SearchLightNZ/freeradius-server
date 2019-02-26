@@ -245,12 +245,20 @@ int eap_tls_start(eap_session_t *eap_session)
  * We add the MPPE keys here.  These are used by the NAS.  The supplicant
  * will derive the same keys separately.
  *
- * @param eap_session that completed successfully.
+ * @param[in] eap_session		that completed successfully.
+ * @param[in] keying_prf_label		PRF label to use for generating keying material.
+ *					If NULL, no MPPE keys will be generated.
+ * @param[in] keying_prf_label_len	Length of the keying PRF label.
+ * @param[in] sessid_prf_label		PRF label to use when generating the session ID.
+ *					If NULL, session ID will be based on client/server randoms.
+ * @param[in] sessid_prf_label_len	Length of the session ID PRF label.
  * @return
  *	- 0 on success.
  *	- -1 on failure.
  */
-int eap_tls_success(eap_session_t *eap_session)
+int eap_tls_success(eap_session_t *eap_session,
+		    char const *keying_prf_label, size_t keying_prf_label_len,
+		    char const *sessid_prf_label, size_t sessid_prf_label_len)
 {
 	REQUEST			*request = eap_session->request;
 	eap_tls_session_t	*eap_tls_session = talloc_get_type_abort(eap_session->opaque, eap_tls_session_t);
@@ -291,14 +299,27 @@ int eap_tls_success(eap_session_t *eap_session)
 	/*
 	 *	Automatically generate MPPE keying material.
 	 */
-	if (tls_session->prf_label) {
-		eap_tls_gen_mppe_keys(eap_session->request, tls_session->ssl, tls_session->prf_label);
+	if (keying_prf_label) if (eap_crypto_mppe_keys(eap_session->request, tls_session->ssl,
+						       keying_prf_label, keying_prf_label_len) < 0) return -1;
 
-	} else if (eap_session->type != FR_EAP_FAST) {
-		RWDEBUG("Not adding MPPE keys because there is no PRF label");
+	/*
+	 *	Add the EAP session ID to the request
+	 */
+	{
+		uint8_t		*session_id;
+		VALUE_PAIR	*vp;
+
+		if (eap_crypto_tls_session_id(eap_session->request->reply, request, tls_session->ssl,
+					      &session_id, eap_session->type,
+					      sessid_prf_label, sessid_prf_label_len) < 0) return -1;
+
+		MEM(pair_add_reply(&vp, attr_eap_session_id) >= 0);
+		fr_pair_value_memsteal(vp, session_id);
+
+		RINDENT();
+		RDEBUG2("&reply:%pP", vp);
+		REXDENT();
 	}
-
-	eap_tls_gen_eap_key(eap_session->request->reply, tls_session->ssl, eap_session->type);
 
 	return 0;
 }
@@ -482,22 +503,22 @@ static eap_tls_status_t eap_tls_session_status(eap_session_t *eap_session)
 		return EAP_TLS_INVALID;
 	}
 	if (!tls_session->info.initialized) {
-		RDEBUG("No SSL info available.  Waiting for more SSL data");
+		RDEBUG2("No SSL info available.  Waiting for more SSL data");
 		return EAP_TLS_RECORD_SEND;
 	}
 
-	if ((tls_session->info.content_type == handshake) && (tls_session->info.origin == 0)) {
+	if ((tls_session->info.content_type == SSL3_RT_HANDSHAKE) && (tls_session->info.origin == 0)) {
 		REDEBUG("Unexpected ACK received:  We sent no previous messages");
 		return EAP_TLS_INVALID;
 	}
 
 	switch (tls_session->info.content_type) {
-	case alert:
+	case SSL3_RT_ALERT:
 		RDEBUG2("Peer ACKed our alert");
 		return EAP_TLS_FAIL;
 
-	case handshake:
-		if ((tls_session->info.handshake_type == handshake_finished) && (tls_session->dirty_out.used == 0)) {
+	case SSL3_RT_HANDSHAKE:
+		if (SSL_is_init_finished(tls_session->ssl) && (tls_session->dirty_out.used == 0)) {
 			RDEBUG2("Peer ACKed our handshake fragment.  handshake is finished");
 
 			/*
@@ -505,7 +526,7 @@ static eap_tls_status_t eap_tls_session_status(eap_session_t *eap_session)
 			 *	application data set it here as nobody else
 			 *	sets it.
 			 */
-			tls_session->info.content_type = application_data;
+			tls_session->info.content_type = SSL3_RT_APPLICATION_DATA;
 			return EAP_TLS_ESTABLISHED;
 		} /* else more data to send */
 
@@ -513,7 +534,7 @@ static eap_tls_status_t eap_tls_session_status(eap_session_t *eap_session)
 		/* Fragmentation handler, send next fragment */
 		return EAP_TLS_RECORD_SEND;
 
-	case application_data:
+	case SSL3_RT_APPLICATION_DATA:
 		RDEBUG2("Peer ACKed our application data fragment");
 		return EAP_TLS_RECORD_SEND;
 
@@ -572,7 +593,7 @@ static eap_tls_status_t eap_tls_verify(eap_session_t *eap_session)
 	 */
 	eap_tls_data = (eap_tls_data_t *)this_round->response->type.data;
 	if (!eap_tls_data) {
-		RDEBUG("Invalid EAP-TLS packet; no data");
+		REDEBUG("Invalid EAP-TLS packet; no data");
 		return EAP_TLS_INVALID;
 	}
 
@@ -797,7 +818,7 @@ static eap_tls_status_t eap_tls_handshake(eap_session_t *eap_session)
 	/*
 	 *	Continue the TLS handshake
 	 */
-	if (!tls_session_handshake(eap_session->request, tls_session)) {
+	if (tls_session_handshake(eap_session->request, tls_session) < 0) {
 		REDEBUG("TLS receive handshake failed during operation");
 		tls_cache_deny(tls_session);
 		return EAP_TLS_FAIL;
@@ -828,7 +849,7 @@ static eap_tls_status_t eap_tls_handshake(eap_session_t *eap_session)
 		 *	Init is finished.  The rest is
 		 *	application data.
 		 */
-		tls_session->info.content_type = application_data;
+		tls_session->info.content_type = SSL3_RT_APPLICATION_DATA;
 		return EAP_TLS_ESTABLISHED;
 	}
 
@@ -877,8 +898,6 @@ eap_tls_status_t eap_tls_process(eap_session_t *eap_session)
 	if (!request) return EAP_TLS_FAIL;
 
 	RDEBUG2("Continuing EAP-TLS");
-
-	SSL_set_ex_data(tls_session->ssl, FR_TLS_EX_INDEX_REQUEST, request);
 
 	/*
 	 *	Call eap_tls_verify to sanity check the incoming EAP data.
@@ -1011,8 +1030,6 @@ eap_tls_status_t eap_tls_process(eap_session_t *eap_session)
 	}
 
  done:
-	SSL_set_ex_data(tls_session->ssl, FR_TLS_EX_INDEX_REQUEST, NULL);	//-V575
-
 	return status;
 }
 

@@ -522,7 +522,7 @@ static bool pass2_fixup_undefined(CONF_ITEM const *ci, vp_tmpl_t *vpt, vp_tmpl_r
 
 	rad_assert(vpt->type == TMPL_TYPE_ATTR_UNDEFINED);
 
-	if (fr_dict_attr_by_qualified_name(&da, rules->dict_def, vpt->tmpl_unknown_name, true) < 0) {
+	if (fr_dict_attr_by_qualified_name(&da, rules->dict_def, vpt->tmpl_unknown_name, true) != FR_DICT_ATTR_OK) {
 		ssize_t slen;
 		fr_dict_attr_t *unknown_da;
 
@@ -531,15 +531,31 @@ static bool pass2_fixup_undefined(CONF_ITEM const *ci, vp_tmpl_t *vpt, vp_tmpl_r
 		 */
 		slen = fr_dict_unknown_afrom_oid_str(vpt, &unknown_da, fr_dict_root(rules->dict_def),
 						     vpt->tmpl_unknown_name);
-		if ((slen < 0) || (vpt->tmpl_unknown_name[slen] != '\0')) {
+		if ((slen <= 0) || (vpt->tmpl_unknown_name[slen] != '\0')) {
 			cf_log_perr(ci, "Failed resolving undefined attribute");
 			return false;
 		}
+
+#ifdef __clang_analyzer__
+		/*
+		 *	This can't happen, but clang analyzer
+		 *	can't deal with the call depth.
+		 */
+		if (!unknown_da) return false;
+#endif
 
 		vpt->tmpl_da = vpt->tmpl_unknown = unknown_da;
 		vpt->type = TMPL_TYPE_ATTR;
 		return true;
 	}
+
+#ifdef __clang_analyzer__
+	/*
+	 *	This can't happen, but clang analyzer
+	 *	can't deal with the call depth.
+	 */
+	if (!da) return false;
+#endif
 
 	vpt->tmpl_da = da;
 	vpt->type = TMPL_TYPE_ATTR;
@@ -574,39 +590,10 @@ static bool pass2_fixup_tmpl(CONF_ITEM const *ci, vp_tmpl_t **pvpt, vp_tmpl_rule
 	return true;
 }
 
-static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
+static bool pass2_fixup_map(fr_cond_t *c, vp_tmpl_rules_t const *rules)
 {
-	vp_map_t		*map;
 	vp_tmpl_t		*vpt;
-	unlang_compile_t	*unlang_ctx = uctx;
-
-	/*
-	 *	These don't get optimized.
-	 */
-	if ((c->type == COND_TYPE_TRUE) ||
-	    (c->type == COND_TYPE_FALSE)) {
-		return true;
-	}
-
-	/*
-	 *	Call children.
-	 */
-	if (c->type == COND_TYPE_CHILD) {
-		return pass2_cond_callback(c->data.child, uctx);
-	}
-
-	/*
-	 *	Fix up the template.
-	 */
-	if (c->type == COND_TYPE_EXISTS) {
-		rad_assert(c->data.vpt->type != TMPL_TYPE_REGEX);
-		return pass2_fixup_tmpl(c->ci, &c->data.vpt, unlang_ctx->rules, true);
-	}
-
-	/*
-	 *	And tons of complicated checks.
-	 */
-	rad_assert(c->type == COND_TYPE_MAP);
+	vp_map_t		*map;
 
 	map = c->data.map;	/* shorter */
 
@@ -637,12 +624,12 @@ static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
 		 *	Resolve the attribute references first
 		 */
 		if (map->lhs->type == TMPL_TYPE_ATTR_UNDEFINED) {
-			if (!pass2_fixup_undefined(map->ci, map->lhs, unlang_ctx->rules)) return false;
+			if (!pass2_fixup_undefined(map->ci, map->lhs, rules)) return false;
 			if (!cast) cast = map->lhs->tmpl_da;
 		}
 
 		if (map->rhs->type == TMPL_TYPE_ATTR_UNDEFINED) {
-			if (!pass2_fixup_undefined(map->ci, map->rhs, unlang_ctx->rules)) return false;
+			if (!pass2_fixup_undefined(map->ci, map->rhs, rules)) return false;
 			if (!cast) cast = map->rhs->tmpl_da;
 		}
 
@@ -671,7 +658,7 @@ static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
 
 			if (tmpl_cast_in_place(c->data.map->lhs, cast->type, cast) < 0) {
 				cf_log_err(map->ci, "Failed to parse data type %s from string: %pV",
-					   fr_int2str(fr_value_box_type_names, cast->type, "<UNKNOWN>"),
+					   fr_int2str(fr_value_box_type_table, cast->type, "<UNKNOWN>"),
 					   fr_box_strvalue_len(map->lhs->name, map->lhs->len));
 
 				return false;
@@ -698,7 +685,7 @@ static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
 
 			if (tmpl_cast_in_place(c->data.map->rhs, cast->type, cast) < 0) {
 				cf_log_err(map->ci, "Failed to parse data type %s from string: %pV",
-					   fr_int2str(fr_value_box_type_names, cast->type, "<UNKNOWN>"),
+					   fr_int2str(fr_value_box_type_table, cast->type, "<UNKNOWN>"),
 					   fr_box_strvalue_len(map->rhs->name, map->rhs->len));
 				return false;
 			}
@@ -724,11 +711,11 @@ static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
 		 *	@todo v3.1: allow anything anywhere.
 		 */
 		if (map->rhs->type != TMPL_TYPE_UNPARSED) {
-			if (!pass2_fixup_xlat(map->ci, &map->lhs, false, NULL, unlang_ctx->rules)) {
+			if (!pass2_fixup_xlat(map->ci, &map->lhs, false, NULL, rules)) {
 				return false;
 			}
 		} else {
-			if (!pass2_fixup_xlat(map->ci, &map->lhs, true, NULL, unlang_ctx->rules)) {
+			if (!pass2_fixup_xlat(map->ci, &map->lhs, true, NULL, rules)) {
 				return false;
 			}
 
@@ -752,7 +739,7 @@ static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
 
 					if (tmpl_cast_in_place(map->rhs, map->lhs->tmpl_da->type, map->lhs->tmpl_da) < 0) {
 						cf_log_err(map->ci, "Failed to parse data type %s from string: %pV",
-							   fr_int2str(fr_value_box_type_names, map->lhs->tmpl_da->type, "<UNKNOWN>"),
+							   fr_int2str(fr_value_box_type_table, map->lhs->tmpl_da->type, "<UNKNOWN>"),
 							   fr_box_strvalue_len(map->rhs->name, map->rhs->len));
 						return false;
 					} /* else the cast was successful */
@@ -801,12 +788,12 @@ static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
 
 			if (!c->cast) da = map->lhs->tmpl_da;
 
-			if (!pass2_fixup_xlat(map->ci, &map->rhs, true, da, unlang_ctx->rules)) {
+			if (!pass2_fixup_xlat(map->ci, &map->rhs, true, da, rules)) {
 				return false;
 			}
 
 		} else {
-			if (!pass2_fixup_xlat(map->ci, &map->rhs, false, NULL, unlang_ctx->rules)) {
+			if (!pass2_fixup_xlat(map->ci, &map->rhs, false, NULL, rules)) {
 				return false;
 			}
 		}
@@ -844,7 +831,7 @@ static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
 
 #ifdef HAVE_REGEX
 	if (map->rhs->type == TMPL_TYPE_REGEX) {
-		if (!pass2_fixup_regex(map->ci, map->rhs, unlang_ctx->rules)) {
+		if (!pass2_fixup_regex(map->ci, map->rhs, rules)) {
 			return false;
 		}
 	}
@@ -908,6 +895,46 @@ static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
 	return true;
 }
 
+static bool pass2_cond_callback(fr_cond_t *c, void *uctx)
+{
+	unlang_compile_t	*unlang_ctx = uctx;
+
+	switch (c->type) {
+	/*
+	 *	These don't get optimized.
+	 */
+	case COND_TYPE_TRUE:
+	case COND_TYPE_FALSE:
+		return true;
+
+	/*
+	 *	Call children.
+	 */
+	case COND_TYPE_CHILD:
+		return pass2_cond_callback(c->data.child, uctx);
+
+	/*
+	 *	Fix up the template.
+	 */
+	case COND_TYPE_EXISTS:
+		rad_assert(c->data.vpt->type != TMPL_TYPE_REGEX);
+		return pass2_fixup_tmpl(c->ci, &c->data.vpt, unlang_ctx->rules, true);
+
+	/*
+	 *	Fixup the map
+	 */
+	case COND_TYPE_MAP:
+		return pass2_fixup_map(c, unlang_ctx->rules);
+
+	/*
+	 *	Nothing else has pass2 fixups
+	 */
+	default:
+		rad_assert(0);
+		return false;
+	}
+}
+
 
 /*
  *	Compile the RHS of update sections to xlat_exp_t
@@ -960,7 +987,7 @@ static bool pass2_fixup_update(unlang_group_t *g, vp_tmpl_rules_t const *rules)
 /*
  *	Compile the RHS of map sections to xlat_exp_t
  */
-static bool pass2_fixup_map(unlang_group_t *g, vp_tmpl_rules_t const *rules)
+static bool pass2_fixup_map_rhs(unlang_group_t *g, vp_tmpl_rules_t const *rules)
 {
 	/*
 	 *	Compile the map
@@ -1316,8 +1343,8 @@ int unlang_fixup_update(vp_map_t *map, UNUSED void *ctx)
 		 */
 		if (tmpl_cast_in_place(map->rhs, map->lhs->tmpl_da->type, map->lhs->tmpl_da) < 0) {
 			cf_log_perr(map->ci, "Cannot convert RHS value (%s) to LHS attribute type (%s)",
-				    fr_int2str(fr_value_box_type_names, FR_TYPE_STRING, "<INVALID>"),
-				    fr_int2str(fr_value_box_type_names, map->lhs->tmpl_da->type, "<INVALID>"));
+				    fr_int2str(fr_value_box_type_table, FR_TYPE_STRING, "<INVALID>"),
+				    fr_int2str(fr_value_box_type_table, map->lhs->tmpl_da->type, "<INVALID>"));
 			return -1;
 		}
 
@@ -1331,7 +1358,7 @@ int unlang_fixup_update(vp_map_t *map, UNUSED void *ctx)
 			da = fr_dict_attr_by_type(map->lhs->tmpl_da, map->rhs->tmpl_value_type);
 			if (!da) {
 				fr_strerror_printf("Cannot find %s variant of attribute \"%s\"",
-						   fr_int2str(fr_value_box_type_names, map->rhs->tmpl_value_type,
+						   fr_int2str(fr_value_box_type_table, map->rhs->tmpl_value_type,
 						   "<INVALID>"), map->lhs->tmpl_da->name);
 				return -1;
 			}
@@ -1555,7 +1582,7 @@ static unlang_t *compile_map(unlang_t *parent, unlang_compile_t *unlang_ctx,
 	 *	header?  Or ensure that the map is registered in the
 	 *	"boostrap" phase, so that it's always available here.
 	 */
-	if (!pass2_fixup_map(g, unlang_ctx->rules)) {
+	if (!pass2_fixup_map_rhs(g, unlang_ctx->rules)) {
 		talloc_free(g);
 		return NULL;
 	}

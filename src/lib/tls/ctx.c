@@ -38,9 +38,9 @@ USES_APPLE_DEPRECATED_API	/* OpenSSL API has been deprecated by Apple */
 #include <openssl/dh.h>
 
 #include "base.h"
+#include "missing.h"
 
-#if OPENSSL_VERSION_NUMBER >= 0x0090800fL
-#  ifndef OPENSSL_NO_ECDH
+#ifndef OPENSSL_NO_ECDH
 static int ctx_ecdh_curve_set(SSL_CTX *ctx, char const *ecdh_curve, bool disable_single_dh_use)
 {
 	int      nid;
@@ -70,7 +70,6 @@ static int ctx_ecdh_curve_set(SSL_CTX *ctx, char const *ecdh_curve, bool disable
 
 	return 0;
 }
-#  endif
 #endif
 
 /*
@@ -155,7 +154,6 @@ static int tls_ctx_load_cert_chain(SSL_CTX *ctx, fr_tls_chain_conf_t const *chai
 		return -1;
 	}
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 	{
 		size_t		extra_cnt, i;
 		/*
@@ -202,7 +200,6 @@ static int tls_ctx_load_cert_chain(SSL_CTX *ctx, fr_tls_chain_conf_t const *chai
 			SSL_CTX_add0_chain_cert(ctx, cert);
 		}
 	}
-#endif
 
 	/*
 	 *	Check if the last loaded private key matches the last
@@ -216,7 +213,6 @@ static int tls_ctx_load_cert_chain(SSL_CTX *ctx, fr_tls_chain_conf_t const *chai
 		return -1;
 	}
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 	{
 		int mode = SSL_BUILD_CHAIN_FLAG_CHECK;
 
@@ -258,11 +254,9 @@ static int tls_ctx_load_cert_chain(SSL_CTX *ctx, fr_tls_chain_conf_t const *chai
 			break;
 		}
 	}
-#endif
 	return 0;
 }
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 static void _tls_ctx_print_cert_line(int index, X509 *cert)
 {
 	char		subject[1024];
@@ -272,7 +266,6 @@ static void _tls_ctx_print_cert_line(int index, X509 *cert)
 
 	DEBUG3("[%i] %s %s", index, tls_utils_x509_pkey_type(cert), subject);
 }
-#endif
 
 /** Create SSL context
  *
@@ -290,10 +283,8 @@ SSL_CTX *tls_ctx_alloc(fr_tls_conf_t const *conf, bool client)
 {
 	SSL_CTX		*ctx;
 	X509_STORE	*cert_vpstore;
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 	X509_STORE	*chain_store;
 	X509_STORE 	*verify_store;
-#endif
 	int		verify_mode = SSL_VERIFY_NONE;
 	int		ctx_options = 0;
 	void		*app_data_index;
@@ -321,12 +312,12 @@ SSL_CTX *tls_ctx_alloc(fr_tls_conf_t const *conf, bool client)
 	 *	Identify the type of certificates that needs to be loaded
 	 */
 #ifdef PSK_MAX_IDENTITY_LEN
-	if (!client) {
-		/*
-		 *	No dynamic query exists.  There MUST be a
-		 *	statically configured identity and password.
-		 */
-		if (conf->psk_query && !*conf->psk_query) {
+	/*
+	 *	A dynamic query exists.  There MUST NOT be a
+	 *	statically configured identity and password.
+	 */
+	if (conf->psk_query) {
+		if (!*conf->psk_query) {
 			ERROR("Invalid PSK Configuration: psk_query cannot be empty");
 		error:
 			SSL_BIND_MEMORY_END;
@@ -334,41 +325,63 @@ SSL_CTX *tls_ctx_alloc(fr_tls_conf_t const *conf, bool client)
 			return NULL;
 		}
 
-		/*
-		 *	Set the callback only if we can check things.
-		 */
-		if (conf->psk_identity || conf->psk_query) {
-			SSL_CTX_set_psk_server_callback(ctx, tls_session_psk_server_cb);
+		if (conf->psk_identity && *conf->psk_identity) {
+			ERROR("Invalid PSK Configuration: psk_identity and psk_query cannot be used at the same time.");
+			goto error;
 		}
 
-	} else if (conf->psk_query) {
-		ERROR("Invalid PSK Configuration: psk_query cannot be used for outgoing connections");
-		goto error;
-	}
-
-	/*
-	 *	Now check that if PSK is being used, the config is valid.
-	 */
-	if ((conf->psk_identity && !conf->psk_password) ||
-	    (!conf->psk_identity && conf->psk_password) ||
-	    (conf->psk_identity && !*conf->psk_identity) ||
-	    (conf->psk_password && !*conf->psk_password)) {
-		ERROR("Invalid PSK Configuration: psk_identity or psk_password are empty");
-		goto error;
-	}
-
-	if (conf->psk_identity) {
-		size_t psk_len, hex_len;
-		uint8_t buffer[PSK_MAX_PSK_LEN];
-
-		if (conf->chains || conf->ca_file || conf->ca_path) {
-			ERROR("When PSKs are used, No certificate configuration is permitted");
+		if (conf->psk_password && *conf->psk_password) {
+			ERROR("Invalid PSK Configuration: psk_password and psk_query cannot be used at the same time.");
 			goto error;
 		}
 
 		if (client) {
+			ERROR("Invalid PSK Configuration: psk_query cannot be used for outgoing connections");
+			goto error;
+		}
+
+		/*
+		 *	Now check that if PSK is being used, that the config is valid.
+		 */
+	} else if (conf->psk_identity) {
+		if (!*conf->psk_identity) {
+			ERROR("Invalid PSK Configuration: psk_identity is empty");
+			goto error;
+		}
+
+
+		if (!conf->psk_password || !*conf->psk_password) {
+			ERROR("Invalid PSK Configuration: psk_identity is set, but there is no psk_password");
+			goto error;
+		}
+
+	} else if (conf->psk_password) {
+		ERROR("Invalid PSK Configuration: psk_password is set, but there is no psk_identity");
+		goto error;
+	}
+
+	/*
+	 *	Set the server PSK callback if necessary.
+	 */
+	if (!client && (conf->psk_identity || conf->psk_query)) {
+		SSL_CTX_set_psk_server_callback(ctx, tls_session_psk_server_cb);
+	}
+
+	/*
+	 *	Do more sanity checking if we have a PSK identity.  We
+	 *	check the password, and convert it to it's final form.
+	 */
+	if (conf->psk_identity) {
+		size_t psk_len, hex_len;
+		uint8_t buffer[PSK_MAX_PSK_LEN];
+
+		if (client) {
 			SSL_CTX_set_psk_client_callback(ctx, tls_session_psk_client_cb);
 		}
+
+#ifdef __clang_analyzer__
+		if (!conf->psk_password) goto error; /* clang is too dumb to catch the above checks */
+#endif
 
 		psk_len = strlen(conf->psk_password);
 		if (strlen(conf->psk_password) > (2 * PSK_MAX_PSK_LEN)) {
@@ -414,7 +427,6 @@ SSL_CTX *tls_ctx_alloc(fr_tls_conf_t const *conf, bool client)
 		if (mode) SSL_CTX_set_mode(ctx, mode);
 	}
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 	/*
 	 *	If we're using a sufficiently new version of
 	 *	OpenSSL, initialise different stores for creating
@@ -435,7 +447,7 @@ SSL_CTX *tls_ctx_alloc(fr_tls_conf_t const *conf, bool client)
 		MEM(verify_store = X509_STORE_new());
 		SSL_CTX_set0_verify_cert_store(ctx, verify_store);
 	}
-#endif
+
 	/*
 	 *	Load the CAs we trust
 	 */
@@ -470,7 +482,6 @@ SSL_CTX *tls_ctx_alloc(fr_tls_conf_t const *conf, bool client)
 			}
 		}
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 		/*
 		 *	Print out our certificate chains.
 		 *
@@ -530,7 +541,6 @@ SSL_CTX *tls_ctx_alloc(fr_tls_conf_t const *conf, bool client)
 			}
 			(void)SSL_CTX_set_current_cert(ctx, SSL_CERT_SET_FIRST);	/* Reset */
 		}
-#endif
 	}
 
 	/*
@@ -561,8 +571,12 @@ post_ca:
 		int max_version = 0;
 
 		if (conf->tls_min_version > conf->tls_max_version) {
+			/*
+			 *	%f is actually %lg now (double).  Compile complains about
+			 *      implicit promotion unless we cast args to double.
+			 */
 			ERROR("tls_min_version (%f) must be <= tls_max_version (%f)",
-			      conf->tls_min_version, conf->tls_max_version);
+			      (double)conf->tls_min_version, (double)conf->tls_max_version);
 			goto error;
 		}
 
@@ -610,6 +624,10 @@ post_ca:
 		}
 	}
 #else
+	/*
+	 *	OpenSSL < 1.1.0 - This doesn't need to change when new TLS versions are issued
+	 *	as new TLS versions will never be added to older OpenSSL versions.
+	 */
 	{
 		int ctx_tls_versions = 0;
 
@@ -626,7 +644,7 @@ post_ca:
 
 		/*
 		 *	As of 3.0.5, we always allow TLSv1.1 and TLSv1.2.
-		 *	Though they can be *globally* disabled if necessary.x
+		 *	Though they can be *globally* disabled if necessary.
 		 */
 #  ifdef SSL_OP_NO_TLSv1
 		if (conf->tls_min_version > (float) 1.0) ctx_options |= SSL_OP_NO_TLSv1;
@@ -714,12 +732,10 @@ post_ca:
 	/*
 	 *	Set eliptical curve crypto configuration.
 	 */
-#if OPENSSL_VERSION_NUMBER >= 0x0090800fL
 #ifndef OPENSSL_NO_ECDH
 	if (ctx_ecdh_curve_set(ctx, conf->ecdh_curve, conf->disable_single_dh_use) < 0) {
 		goto error;
 	}
-#endif
 #endif
 
 	/* Set Info callback */
@@ -765,16 +781,6 @@ post_ca:
 			memcpy(&tmp, &staple_conf, sizeof(tmp));
 
 			SSL_CTX_set_tlsext_status_arg(ctx, tmp);
-		}
-	}
-
-	/*
-	 *	Load randomness
-	 */
-	if (conf->random_file) {
-		if (!(RAND_load_file(conf->random_file, 1024 * 10))) {
-			tls_log_error(NULL, "Failed loading randomness");
-			goto error;
 		}
 	}
 

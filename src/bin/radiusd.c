@@ -154,7 +154,7 @@ do { \
 int main(int argc, char *argv[])
 {
 	int		status;
-	int		argval;
+	int		c;
 	bool		display_version = false;
 	bool		radmin = false;
 	int		from_child[2] = {-1, -1};
@@ -273,8 +273,7 @@ int main(int argc, char *argv[])
 	}
 
 	/*  Process the options.  */
-	while ((argval = getopt(argc, argv, "Cd:D:fhi:l:L:Mn:p:PrstTvxX")) != EOF) {
-		switch (argval) {
+	while ((c = getopt(argc, argv, "Cd:D:fhi:l:L:Mn:p:PrstTvxX")) != -1) switch (c) {
 		case 'C':
 			check_config = true;
 			config->spawn_workers = false;
@@ -382,7 +381,6 @@ int main(int argc, char *argv[])
 		default:
 			usage(config, EXIT_FAILURE);
 			break;
-		}
 	}
 
 	fr_debug_lvl = req_debug_lvl = config->debug_level = rad_debug_lvl;
@@ -397,12 +395,22 @@ int main(int argc, char *argv[])
 
 	if (rad_check_lib_magic(RADIUSD_MAGIC_NUMBER) < 0) EXIT_WITH_FAILURE;
 
+
+#ifdef HAVE_OPENSSL_CRYPTO_H
 	/*
 	 *  Mismatch between build time OpenSSL and linked SSL, better to die
 	 *  here than segfault later.
 	 */
-#ifdef HAVE_OPENSSL_CRYPTO_H
 	if (ssl_check_consistency() < 0) EXIT_WITH_FAILURE;
+
+	/*
+	 *  Initialising OpenSSL once, here, is safer than having individual modules do it.
+	 *  Must be called before display_version to ensure relevant engines are loaded.
+	 *
+	 *  tls_init() must be called before *ANY* OpenSSL functions are used, which is why
+	 *  it's called so early.
+	 */
+	if (tls_init() < 0) EXIT_WITH_FAILURE;
 #endif
 
 	/*
@@ -459,18 +467,17 @@ int main(int argc, char *argv[])
 		EXIT_WITH_FAILURE;
 	}
 
+#ifdef HAVE_OPENSSL_CRYPTO_H
+	if (tls_dict_init() < 0) {
+		fr_perror("radiusd");
+		EXIT_WITH_FAILURE;
+	}
+#endif
+
 	/*
 	 *  Read the configuration files, BEFORE doing anything else.
 	 */
 	if (main_config_init(config) < 0) EXIT_WITH_FAILURE;
-
-	/*
-	 *  Initialising OpenSSL once, here, is safer than having individual modules do it.
-	 *  Must be called before display_version to ensure relevant engines are loaded.
-	 */
-#ifdef HAVE_OPENSSL_CRYPTO_H
-	if (tls_init() < 0) EXIT_WITH_FAILURE;
-#endif
 
 	/*
 	 *  Set panic_action from the main config if one wasn't specified in the
@@ -998,6 +1005,7 @@ cleanup:
 	 *  we don't inteferere with the onexit() handler.
 	 */
 	if (!rad_suid_is_down_permanent() && (fr_get_lsan_state() == 1)) rad_suid_up();
+	fr_strerror();	/* clear error buffer */
 
 	return ret;
 }

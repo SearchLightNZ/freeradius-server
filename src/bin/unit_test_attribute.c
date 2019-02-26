@@ -615,7 +615,7 @@ static ssize_t load_proto_library(char const *proto_name)
 
 static ssize_t load_test_point_by_command(void **symbol, char *command, size_t offset, char const *dflt_symbol)
 {
-	char		buffer[128];
+	char		buffer[256];
 	char const	*p, *q;
 	char const	*symbol_name;
 	void		*dl_symbol;
@@ -1367,7 +1367,7 @@ int main(int argc, char *argv[])
 	MEM(features = cf_section_alloc(cs, cs, "feature", NULL));
 	dependency_features_init(features);	/* Add build time features to the config section */
 
-	while ((c = getopt(argc, argv, "d:D:fxMh")) != EOF) switch (c) {
+	while ((c = getopt(argc, argv, "d:D:fxMh")) != -1) switch (c) {
 		case 'd':
 			raddb_dir = optarg;
 			break;

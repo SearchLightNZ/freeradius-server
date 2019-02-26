@@ -15,7 +15,7 @@
  *  "DISCLAIMER OF LIABILITY
  *
  *  THIS SOFTWARE IS PROVIDED BY DAN HARKINS ``AS IS'' AND
- *  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ *  ANY EXPretS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  *  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  *  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE INDUSTRIAL LOUNGE BE LIABLE
  *  FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
@@ -36,6 +36,7 @@ USES_APPLE_DEPRECATED_API	/* OpenSSL API has been deprecated by Apple */
 
 #include <freeradius-devel/server/base.h>
 #include <freeradius-devel/tls/base.h>
+#include <freeradius-devel/tls/missing.h>
 #include <freeradius-devel/server/module.h>
 
 #include "eap_pwd.h"
@@ -52,22 +53,22 @@ static void pwd_hmac_final(HMAC_CTX *hmac_ctx, uint8_t *digest)
 
 /* a counter-based KDF based on NIST SP800-108 */
 static void eap_pwd_kdf(uint8_t *key, int keylen, char const *label,
-			int label_len, uint8_t *result, int result_bit_len)
+			int label_len, uint8_t *retult, int retult_bit_len)
 {
 	HMAC_CTX	*hmac_ctx;
 	uint8_t		digest[SHA256_DIGEST_LENGTH];
 	uint16_t	i, ctr, L;
-	int		result_byte_len, len = 0;
+	int		retult_byte_len, len = 0;
 	unsigned int	mdlen = SHA256_DIGEST_LENGTH;
 	uint8_t		mask = 0xff;
 
 	hmac_ctx = HMAC_CTX_new();
 	if (!hmac_ctx) return;
-	result_byte_len = (result_bit_len + 7) / 8;
+	retult_byte_len = (retult_bit_len + 7) / 8;
 
 	ctr = 0;
-	L = htons(result_bit_len);
-	while (len < result_byte_len) {
+	L = htons(retult_bit_len);
+	while (len < retult_byte_len) {
 		ctr++; i = htons(ctr);
 
 		HMAC_Init_ex(hmac_ctx, key, keylen, EVP_sha256(), NULL);
@@ -76,19 +77,19 @@ static void eap_pwd_kdf(uint8_t *key, int keylen, char const *label,
 		HMAC_Update(hmac_ctx, (uint8_t const *)label, label_len);
 		HMAC_Update(hmac_ctx, (uint8_t *) &L, sizeof(uint16_t));
 		HMAC_Final(hmac_ctx, digest, &mdlen);
-		if ((len + (int) mdlen) > result_byte_len) {
-			memcpy(result + len, digest, result_byte_len - len);
+		if ((len + (int) mdlen) > retult_byte_len) {
+			memcpy(retult + len, digest, retult_byte_len - len);
 		} else {
-			memcpy(result + len, digest, mdlen);
+			memcpy(retult + len, digest, mdlen);
 		}
 		len += mdlen;
 		HMAC_CTX_reset(hmac_ctx);
 	}
 
 	/* since we're expanding to a bit length, mask off the excess */
-	if (result_bit_len % 8) {
-		mask <<= (8 - (result_bit_len % 8));
-		result[result_byte_len - 1] &= mask;
+	if (retult_bit_len % 8) {
+		mask <<= (8 - (retult_bit_len % 8));
+		retult[retult_byte_len - 1] &= mask;
 	}
 
 	HMAC_CTX_free(hmac_ctx);
@@ -142,15 +143,14 @@ int compute_password_element(pwd_session_t *session, uint16_t grp_num,
 		goto error;
 	}
 
-	if (((rnd = BN_new()) == NULL) ||
-	    ((cofactor = BN_new()) == NULL) ||
-	    ((session->pwe = EC_POINT_new(session->group)) == NULL) ||
-	    ((session->order = BN_new()) == NULL) ||
-	    ((session->prime = BN_new()) == NULL) ||
-	    ((x_candidate = BN_new()) == NULL)) {
-		ERROR("Unable to create bignums");
-		goto error;
-	}
+	MEM(session->pwe = EC_POINT_new(session->group));
+	MEM(session->order = BN_new());
+	MEM(session->prime = BN_new());
+
+	MEM(rnd = BN_new());
+	MEM(cofactor = BN_new());
+	MEM(x_candidate = BN_new());
+
 
 	if (!EC_GROUP_get_curve_GFp(session->group, session->prime, NULL, NULL, NULL)) {
 		ERROR("Unable to get prime for GFp curve");
@@ -273,13 +273,11 @@ int compute_scalar_element(pwd_session_t *session, BN_CTX *bn_ctx)
 	BIGNUM *mask = NULL;
 	int ret = -1;
 
-	if (((session->private_value = BN_new()) == NULL) ||
-	    ((session->my_element = EC_POINT_new(session->group)) == NULL) ||
-	    ((session->my_scalar = BN_new()) == NULL) ||
-	    ((mask = BN_new()) == NULL)) {
-		ERROR("Server scalar allocation failed");
-		goto error;
-	}
+	MEM(session->private_value = BN_new());
+	MEM(session->my_element = EC_POINT_new(session->group));
+	MEM(session->my_scalar = BN_new());
+
+	MEM(mask = BN_new());
 
 	if (BN_rand_range(session->private_value, session->order) != 1) {
 		ERROR("Unable to get randomness for private_value");
@@ -316,19 +314,17 @@ int process_peer_commit(pwd_session_t *session, uint8_t *in, size_t in_len, BN_C
 	size_t		data_len;
 	BIGNUM		*x = NULL, *y = NULL, *cofactor = NULL;
 	EC_POINT	*K = NULL, *point = NULL;
-	int		res = 1;
+	int		ret = 1;
 
-	if (((session->peer_scalar = BN_new()) == NULL) ||
-	    ((session->k = BN_new()) == NULL) ||
-	    ((cofactor = BN_new()) == NULL) ||
-	    ((x = BN_new()) == NULL) ||
-	    ((y = BN_new()) == NULL) ||
-	    ((point = EC_POINT_new(session->group)) == NULL) ||
-	    ((K = EC_POINT_new(session->group)) == NULL) ||
-	    ((session->peer_element = EC_POINT_new(session->group)) == NULL)) {
-		ERROR("Failed to allocate room to process peer's commit");
-		goto finish;
-	}
+	MEM(session->peer_scalar = BN_new());
+	MEM(session->k = BN_new());
+	MEM(session->peer_element = EC_POINT_new(session->group));
+	MEM(point = EC_POINT_new(session->group));
+	MEM(K = EC_POINT_new(session->group));
+
+	MEM(cofactor = BN_new());
+	MEM(x = BN_new());
+	MEM(y = BN_new());
 
 	if (!EC_GROUP_get_cofactor(session->group, cofactor, NULL)) {
 		ERROR("Unable to get group co-factor");
@@ -404,7 +400,7 @@ int process_peer_commit(pwd_session_t *session, uint8_t *in, size_t in_len, BN_C
 		ERROR("Unable to get shared secret from K");
 		goto finish;
 	}
-	res = 0;
+	ret = 0;
 
 finish:
 	EC_POINT_clear_free(K);
@@ -413,7 +409,7 @@ finish:
 	BN_clear_free(x);
 	BN_clear_free(y);
 
-	return res;
+	return ret;
 }
 
 int compute_server_confirm(pwd_session_t *session, uint8_t *out, BN_CTX *bn_ctx)
@@ -426,11 +422,9 @@ int compute_server_confirm(pwd_session_t *session, uint8_t *out, BN_CTX *bn_ctx)
 	/*
 	 * Each component of the cruft will be at most as big as the prime
 	 */
-	if (((cruft = talloc_zero_array(session, uint8_t, BN_num_bytes(session->prime))) == NULL) ||
-	    ((x = BN_new()) == NULL) || ((y = BN_new()) == NULL)) {
-		ERROR("Unable to allocate space to compute confirm");
-		goto finish;
-	}
+	MEM(cruft = talloc_zero_array(session, uint8_t, BN_num_bytes(session->prime)));
+	MEM(x = BN_new());
+	MEM(y = BN_new());
 
 	/*
 	 * commit is H(k | server_element | server_scalar | peer_element |
@@ -529,11 +523,9 @@ int compute_peer_confirm(pwd_session_t *session, uint8_t *out, BN_CTX *bn_ctx)
 	/*
 	 * Each component of the cruft will be at most as big as the prime
 	 */
-	if (((cruft = talloc_zero_array(session, uint8_t, BN_num_bytes(session->prime))) == NULL) ||
-	    ((x = BN_new()) == NULL) || ((y = BN_new()) == NULL)) {
-		ERROR("Unable to allocate space to compute confirm");
-		goto finish;
-	}
+	MEM(cruft = talloc_zero_array(session, uint8_t, BN_num_bytes(session->prime)));
+	MEM(x = BN_new());
+	MEM(y = BN_new());
 
 	/*
 	 * commit is H(k | server_element | server_scalar | peer_element |

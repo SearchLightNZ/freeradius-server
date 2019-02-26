@@ -181,7 +181,7 @@ static int rlm_rest_perform(rlm_rest_t const *instance, rlm_rest_thread_t *threa
 	char		*uri = NULL;
 	int		ret;
 
-	RDEBUG("Expanding URI components");
+	RDEBUG2("Expanding URI components");
 
 	/*
 	 *  Build xlat'd URI, this allows REST servers to be specified by
@@ -190,7 +190,7 @@ static int rlm_rest_perform(rlm_rest_t const *instance, rlm_rest_thread_t *threa
 	uri_len = rest_uri_build(&uri, instance, request, section->uri);
 	if (uri_len <= 0) return -1;
 
-	RDEBUG("Sending HTTP %s to \"%s\"", fr_int2str(http_method_table, section->method, NULL), uri);
+	RDEBUG2("Sending HTTP %s to \"%s\"", fr_int2str(http_method_table, section->method, NULL), uri);
 
 	/*
 	 *  Configure various CURL options, and initialise the read/write
@@ -325,7 +325,7 @@ static xlat_action_t rest_xlat(TALLOC_CTX *ctx, UNUSED fr_cursor_t *out,
 	 */
 	memcpy(&rctx->section, &mod_inst->xlat, sizeof(*section));
 
-	RDEBUG("Expanding URI components");
+	RDEBUG2("Expanding URI components");
 
 	/*
 	 *  Extract the method from the start of the format string (if there is one)
@@ -384,7 +384,7 @@ static xlat_action_t rest_xlat(TALLOC_CTX *ctx, UNUSED fr_cursor_t *out,
 		section->data = q;
 	}
 
-	RDEBUG("Sending HTTP %s to \"%s\"",
+	RDEBUG2("Sending HTTP %s to \"%s\"",
 	       (section->method == HTTP_METHOD_CUSTOM) ?
 	       	section->method_str : fr_int2str(http_method_table, section->method, NULL),
 	       uri);
@@ -1062,14 +1062,13 @@ static int mod_instantiate(void *instance, CONF_SECTION *conf)
 static int mod_bootstrap(void *instance, CONF_SECTION *conf)
 {
 	rlm_rest_t *inst = instance;
+	xlat_t const *xlat;
 
 	inst->xlat_name = cf_section_name2(conf);
 	if (!inst->xlat_name) inst->xlat_name = cf_section_name1(conf);
 
-	xlat_async_register(inst, inst->xlat_name, rest_xlat,
-			    NULL, NULL, NULL,
-			    mod_xlat_thread_instantiate, rest_xlat_thread_inst_t, NULL,
-			    inst);
+	xlat = xlat_async_register(inst, inst->xlat_name, rest_xlat);
+	xlat_async_thread_instantiate_set(xlat, mod_xlat_thread_instantiate, rest_xlat_thread_inst_t, NULL, inst);
 
 	return 0;
 }

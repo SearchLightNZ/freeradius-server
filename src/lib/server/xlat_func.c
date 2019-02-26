@@ -132,6 +132,70 @@ int xlat_fmt_copy_vp(TALLOC_CTX *ctx, VALUE_PAIR **out, REQUEST *request, char c
 	return rcode;
 }
 
+/** Convenience function to convert a string attribute reference to a cursor
+ *
+ * This is intended to be used by xlat functions which need to iterate over
+ * an attribute reference provided as a format string or as a boxed value.
+ *
+ * We can't add attribute reference support to the xlat parser
+ * as the inputs and outputs of xlat functions are all boxed values and
+ * couldn't represent a VALUE_PAIR.
+ *
+ * @param[in] ctx	To allocate new cursor in.
+ * @param[out] out	Where to write heap allocated cursor.  Must be freed
+ *			once it's done with.  The heap based cursor is to
+ *      		simplify memory management, as all tmpls are heap
+ *			allocated, and we need to bind the lifetime of the
+ *			tmpl and tmpl cursor together.
+ * @param[in] tainted	May be NULL.  Set to true if one or more of the pairs
+ *      		in the cursor's scope have the tainted flag high.
+ * @param[in] request	The current request.
+ * @param[in] fmt	string.  Leading whitespace will be ignored.
+ * @return
+ *	- 0 on success.
+ *	- -1 on failure.
+ */
+int xlat_fmt_to_cursor(TALLOC_CTX *ctx, fr_cursor_t **out,
+		       bool *tainted, REQUEST *request, char const *fmt)
+{
+	vp_tmpl_t	*vpt;
+	VALUE_PAIR	*vp;
+	fr_cursor_t	*cursor;
+
+	while (isspace((int) *fmt)) fmt++;	/* Not binary safe, but attr refs should only contain printable chars */
+
+	if (tmpl_afrom_attr_str(NULL, &vpt, fmt,
+				&(vp_tmpl_rules_t){
+					.dict_def = request->dict,
+					.prefix = VP_ATTR_REF_PREFIX_AUTO
+				}) < 0) {
+		RPEDEBUG("Failed parsing attribute reference");
+		return -1;
+	}
+
+	MEM(cursor = talloc(ctx, fr_cursor_t));
+	talloc_steal(cursor, vpt);
+	vp = tmpl_cursor_init(NULL, cursor, request, vpt);
+	*out = cursor;
+
+	if (!tainted) return 0;
+
+	*tainted = false;	/* Needed for the rest of the code */
+
+	if (!vp) return 0;
+
+	do {
+		if (vp->vp_tainted) {
+			*tainted = true;
+			break;
+		}
+	} while ((vp = fr_cursor_next(cursor)));
+
+	fr_cursor_head(cursor);	/* Reset */
+
+	return 0;
+}
+
 /** Print length of its RHS.
  *
  */
@@ -254,7 +318,7 @@ static ssize_t xlat_integer(UNUSED TALLOC_CTX *ctx, char **out, size_t outlen,
 		break;
 	}
 
-	REDEBUG("Type '%s' cannot be converted to integer", fr_int2str(fr_value_box_type_names, vp->vp_type, "???"));
+	REDEBUG("Type '%s' cannot be converted to integer", fr_int2str(fr_value_box_type_table, vp->vp_type, "???"));
 
 	return -1;
 }
@@ -339,7 +403,7 @@ static ssize_t xlat_debug_attr(UNUSED TALLOC_CTX *ctx, UNUSED char **out, UNUSED
 	fr_cursor_t	cursor;
 	vp_tmpl_t	*vpt;
 
-	if (!RDEBUG_ENABLED2) return -1;
+	if (!RDEBUG_ENABLED2) return 0;	/* NOOP if debugging isn't enabled */
 
 	while (isspace((int) *fmt)) fmt++;
 
@@ -380,7 +444,7 @@ static ssize_t xlat_debug_attr(UNUSED TALLOC_CTX *ctx, UNUSED char **out, UNUSED
 
 		vendor = fr_dict_vendor_by_da(vp->da);
 		if (vendor) RIDEBUG2("Vendor : %i (%s)", vendor->pen, vendor->name);
-		RIDEBUG2("Type   : %s", fr_int2str(fr_value_box_type_names, vp->vp_type, "<INVALID>"));
+		RIDEBUG2("Type   : %s", fr_int2str(fr_value_box_type_table, vp->vp_type, "<INVALID>"));
 
 		switch (vp->vp_type) {
 		case FR_TYPE_VARIABLE_SIZE:
@@ -393,7 +457,7 @@ static ssize_t xlat_debug_attr(UNUSED TALLOC_CTX *ctx, UNUSED char **out, UNUSED
 
 		if (!RDEBUG_ENABLED4) continue;
 
-		type = fr_value_box_type_names;
+		type = fr_value_box_type_table;
 		while (type->name) {
 			int pad;
 
@@ -402,12 +466,7 @@ static ssize_t xlat_debug_attr(UNUSED TALLOC_CTX *ctx, UNUSED char **out, UNUSED
 			if ((fr_type_t) type->number == vp->vp_type) goto next_type;
 
 			switch (type->number) {
-			case FR_TYPE_INVALID:		/* Not real type */
-			case FR_TYPE_MAX:		/* Not real type */
-			case FR_TYPE_COMBO_IP_ADDR:	/* Covered by IPv4 address IPv6 address */
-			case FR_TYPE_COMBO_IP_PREFIX:	/* Covered by IPv4 address IPv6 address */
-			case FR_TYPE_TIMEVAL:		/* Not a VALUE_PAIR type */
-			case FR_TYPE_STRUCTURAL:
+			case FR_TYPE_NON_VALUES:	/* Skip everything that's not a value */
 				goto next_type;
 
 			default:
@@ -453,13 +512,42 @@ static ssize_t xlat_map(UNUSED TALLOC_CTX *ctx, char **out, size_t outlen,
 	int		ret;
 
 	vp_tmpl_rules_t parse_rules = {
-		.dict_def = request->dict
+		.dict_def = request->dict,
+		.prefix = VP_ATTR_REF_PREFIX_AUTO
 	};
 
 
 	if (map_afrom_attr_str(request, &map, fmt, &parse_rules, &parse_rules) < 0) {
 		RPEDEBUG("Failed parsing \"%s\" as map", fmt);
 		return -1;
+	}
+
+	switch (map->lhs->type) {
+	case TMPL_TYPE_ATTR:
+	case TMPL_TYPE_LIST:
+	case TMPL_TYPE_XLAT:
+		break;
+
+	default:
+		REDEBUG("Unexpected type %s in left hand side of expression",
+			fr_int2str(tmpl_type_table, map->lhs->type, "<INVALID>"));
+		return strlcpy(*out, "0", outlen);
+	}
+
+	switch (map->rhs->type) {
+	case TMPL_TYPE_ATTR:
+	case TMPL_TYPE_EXEC:
+	case TMPL_TYPE_DATA:
+	case TMPL_TYPE_LIST:
+	case TMPL_TYPE_REGEX:
+	case TMPL_TYPE_UNPARSED:
+	case TMPL_TYPE_XLAT:
+		break;
+
+	default:
+		REDEBUG("Unexpected type %s in right hand side of expression",
+			fr_int2str(tmpl_type_table, map->rhs->type, "<INVALID>"));
+		return strlcpy(*out, "0", outlen);
 	}
 
 	RINDENT();
@@ -1366,63 +1454,56 @@ static xlat_action_t hmac_sha1_xlat(TALLOC_CTX *ctx, fr_cursor_t *out,
  * This is intended to serialize one or more attributes as a comma
  * delimited string.
  *
- * Example: "%{pairs:request:}" == "User-Name = 'foo', User-Password = 'bar'"
+ * Example: "%{pairs:request:}" == "User-Name = 'foo'User-Password = 'bar'"
  */
-static ssize_t pairs_xlat(TALLOC_CTX *ctx, char **out, size_t outlen,
-			  UNUSED void const *mod_inst, UNUSED void const *xlat_inst,
-			  REQUEST *request, char const *fmt)
+static xlat_action_t pairs_xlat(TALLOC_CTX *ctx, fr_cursor_t *out,
+								REQUEST *request, UNUSED void const *xlat_inst, UNUSED void *xlat_thread_inst,
+								fr_value_box_t **in)
 {
 	vp_tmpl_t	*vpt = NULL;
 	fr_cursor_t	cursor;
-	size_t		len, freespace = outlen;
-	char		*p = *out;
+	char		*buff;
+	fr_value_box_t	*vb;
+
+	/*
+	 *	If there's no input, there's no output
+	 */
+	if (!in) return XLAT_ACTION_DONE;
+
+	if (fr_value_box_list_concat(ctx, *in, in, FR_TYPE_STRING, true) < 0) {
+		RPEDEBUG("Failed concatenating input");
+		return XLAT_ACTION_FAIL;
+	}
 
 	VALUE_PAIR *vp;
 
-	if (tmpl_afrom_attr_str(ctx, &vpt, fmt,
+	if (tmpl_afrom_attr_str(ctx, &vpt, (*in)->vb_strvalue,
 				&(vp_tmpl_rules_t){
 					.dict_def = request->dict,
 					.prefix = VP_ATTR_REF_PREFIX_AUTO
 				}) <= 0) {
 		RPEDEBUG("Invalid input");
-		return -1;
+		return XLAT_ACTION_FAIL;
 	}
 
 	for (vp = tmpl_cursor_init(NULL, &cursor, request, vpt);
 	     vp;
 	     vp = fr_cursor_next(&cursor)) {
-	     	FR_TOKEN op = vp->op;
+		FR_TOKEN op = vp->op;
 
-	     	vp->op = T_OP_EQ;
-		len = fr_pair_snprint(p, freespace, vp);
+		vp->op = T_OP_EQ;
+		buff = fr_pair_asprint(ctx, vp, '"');
 		vp->op = op;
 
-		if (is_truncated(len, freespace)) {
-		no_space:
-			talloc_free(vpt);
-			REDEBUG("Insufficient space to store pair string, needed %zu bytes have %zu bytes",
-				(p - *out) + len, outlen);
-			return -1;
-		}
-		p += len;
-		freespace -= len;
+		MEM(vb = fr_value_box_alloc(ctx, FR_TYPE_STRING, NULL, false));
+		fr_value_box_bstrsteal(vb, vb, NULL, buff, false);
 
-		if (freespace < 2) {
-			len = 2;
-			goto no_space;
-		}
-
-		*p++ = ',';
-		*p++ = ' ';
-		freespace -= 2;
+		fr_cursor_append(out, vb);
 	}
 
-	/* Trim the trailing ', ' */
-	if (p != *out) p -= 2;
-	*p = '\0';
 	talloc_free(vpt);
 
-	return (p - *out);
+	return XLAT_ACTION_DONE;
 }
 
 /** Encode string or attribute as base64
@@ -1437,6 +1518,7 @@ static xlat_action_t base64_xlat(TALLOC_CTX *ctx, fr_cursor_t *out,
 	ssize_t		elen;
 	char		*buff;
 	fr_value_box_t	*vb;
+
 	/*
 	 *	If there's no input, there's no output
 	 */
@@ -1447,20 +1529,21 @@ static xlat_action_t base64_xlat(TALLOC_CTX *ctx, fr_cursor_t *out,
 		return XLAT_ACTION_FAIL;
 	}
 
-	MEM(vb = fr_value_box_alloc_null(ctx));
 	alen = FR_BASE64_ENC_LENGTH((*in)->vb_length);
 	MEM(buff = talloc_array(ctx, char, alen + 1));
 
 	elen = fr_base64_encode(buff, alen + 1, (*in)->vb_octets, (*in)->vb_length);
 	if (elen < 0) {
 		RPEDEBUG("Base64 encoding failed");
-		talloc_free(vb);
+		talloc_free(buff);
 		return XLAT_ACTION_FAIL;
 	}
 
 	rad_assert((size_t)elen <= alen);
 
-	if (fr_value_box_bstrsnteal(vb, vb, NULL, &buff, elen, false) < 0) {
+	MEM(vb = fr_value_box_alloc_null(ctx));
+
+	if (fr_value_box_bstrsnteal(vb, vb, NULL, &buff, elen, (*in)->tainted) < 0) {
 		RPEDEBUG("Failed assigning encoded data buffer to box");
 		talloc_free(vb);
 		return XLAT_ACTION_FAIL;
@@ -1471,32 +1554,52 @@ static xlat_action_t base64_xlat(TALLOC_CTX *ctx, fr_cursor_t *out,
 	return XLAT_ACTION_DONE;
 }
 
-/** Convert base64 to hex
+/** Decode base64 string
  *
- * Example: "%{base64tohex:Zm9v}" == "666f6f"
+ * Example: "%{base64decode:Zm9v}" == "foo"
  */
-static ssize_t base64_to_hex_xlat(UNUSED TALLOC_CTX *ctx, char **out, size_t outlen,
-				  UNUSED void const *mod_inst, UNUSED void const *xlat_inst,
-				  REQUEST *request, char const *fmt)
+static xlat_action_t xlat_base64_decode(TALLOC_CTX *ctx, fr_cursor_t *out,
+					REQUEST *request, UNUSED void const *xlat_inst, UNUSED void *xlat_thread_inst,
+					fr_value_box_t **in)
 {
-	uint8_t decbuf[1024];
+	size_t		alen;
+	ssize_t		declen;
+	uint8_t		*decbuf;
+	fr_value_box_t	*vb;
 
-	ssize_t declen;
-	ssize_t len = strlen(fmt);
+	/*
+	 *	If there's no input, there's no output
+	 */
+	if (!in) return XLAT_ACTION_DONE;
 
-	declen = fr_base64_decode(decbuf, sizeof(decbuf), fmt, len);
+	if (fr_value_box_list_concat(ctx, *in, in, FR_TYPE_OCTETS, true) < 0) {
+		RPEDEBUG("Failed concatenating input");
+		return XLAT_ACTION_FAIL;
+	}
+
+	alen = FR_BASE64_DEC_LENGTH((*in)->vb_length);
+
+	MEM(decbuf = talloc_array(ctx, uint8_t, alen));
+
+	declen = fr_base64_decode(decbuf, alen, (*in)->vb_strvalue, (*in)->vb_length);
 	if (declen < 0) {
+		talloc_free(decbuf);
 		REDEBUG("Base64 string invalid");
-		return -1;
+		return XLAT_ACTION_FAIL;
 	}
 
-	if ((size_t)((declen * 2) + 1) > outlen) {
-		REDEBUG("Base64 conversion failed, output buffer exhausted, needed %zd bytes, have %zd bytes",
-			(declen * 2) + 1, outlen);
-		return -1;
-	}
+	MEM(vb = fr_value_box_alloc_null(ctx));
 
-	return fr_bin2hex(*out, decbuf, declen);
+	/*
+	 *	Should never fail as we're shrinking...
+	 */
+	if ((size_t)declen != alen) MEM(decbuf = talloc_realloc(ctx, decbuf, uint8_t, (size_t)declen));
+
+	fr_value_box_memsteal(vb, vb, NULL, decbuf, (*in)->tainted);
+
+	fr_cursor_append(out, vb);
+
+	return XLAT_ACTION_DONE;
 }
 
 /** Split an attribute into multiple new attributes based on a delimiter
@@ -1749,7 +1852,7 @@ static ssize_t parse_pad(vp_tmpl_t **vpt_p, size_t *pad_len_p, char *pad_char_p,
 	while (isspace((int) *p)) p++;
 
 	if (*p != '&') {
-		RDEBUG("First argument must be an attribute reference");
+		REDEBUG("First argument must be an attribute reference");
 		return 0;
 	}
 
@@ -1766,7 +1869,7 @@ static ssize_t parse_pad(vp_tmpl_t **vpt_p, size_t *pad_len_p, char *pad_char_p,
 	pad_len = strtoul(p, &end, 10);
 	if ((pad_len == ULONG_MAX) || (pad_len > 8192)) {
 		talloc_free(vpt);
-		RDEBUG("Invalid pad_len found at: %s", p);
+		REDEBUG("Invalid pad_len found at: %s", p);
 		return fmt - p;
 	}
 
@@ -1781,7 +1884,7 @@ static ssize_t parse_pad(vp_tmpl_t **vpt_p, size_t *pad_len_p, char *pad_char_p,
 	if (*p) {
 		if (!isspace(*p)) {
 			talloc_free(vpt);
-			RDEBUG("Invalid text found at: %s", p);
+			REDEBUG("Invalid text found at: %s", p);
 			return fmt - p;
 		}
 
@@ -1789,7 +1892,7 @@ static ssize_t parse_pad(vp_tmpl_t **vpt_p, size_t *pad_len_p, char *pad_char_p,
 
 		if (p[1] != '\0') {
 			talloc_free(vpt);
-			RDEBUG("Invalid text found at: %s", p);
+			REDEBUG("Invalid text found at: %s", p);
 			return fmt - p;
 		}
 
@@ -1976,7 +2079,7 @@ int xlat_register(void *mod_inst, char const *name,
 	xlat_t	*c;
 	bool	new = false;
 
-	if (!xlat_root) xlat_init();
+	if (!xlat_root && (xlat_init() < 0)) return -1;;
 
 	if (!name || !*name) {
 		ERROR("%s: Invalid xlat name", __FUNCTION__);
@@ -2033,40 +2136,14 @@ int xlat_register(void *mod_inst, char const *name,
  *
  * All functions registered must be async_safe.
  *
- * @param[in] ctx			Used to automate deregistration of the xlat fnction.
- * @param[in] name			of the xlat.
- * @param[in] func			to register.
- * @param[in] instantiate		Instantiation function. Called whenever a xlat is
- *					compiled.
- * @param[in] inst_type			Name of the instance structure.
- * @param[in] inst_size			The size of the instance struct.
- *					Pre-allocated for use by the instantiate function.
- *					If 0, no memory will be allocated.
- * @param[in] detach			Called when an xlat_exp_t is freed.
- * @param[in] thread_instantiate	thread_instantiation_function. Called whenever a
- *					a thread is started to create thread local instance
- *					data.
- * @param[in] thread_inst_type		Name of the thread instance structure.
- * @param[in] thread_inst_size		The size of the thread instance struct.
- *					Pre-allocated for use by the thread instance function.
- *					If 0, no memory will be allocated.
- * @param[in] thread_detach		Called when an xlat_exp_t is freed (if ephemeral),
- *					or when a thread exits.
- * @param[in] uctx			To pass to instantiate callbacks and the xlat function
- *					when it's called.  Usually the module instance that
- *					registered the xlat.
+ * @param[in] ctx		Used to automate deregistration of the xlat fnction.
+ * @param[in] name		of the xlat.
+ * @param[in] func		to register.
  * @return
  *	- 0 on success.
  *	- -1 on failure.
  */
-int _xlat_async_register(TALLOC_CTX *ctx,
-			 char const *name, xlat_func_async_t func,
-			 xlat_instantiate_t instantiate, char const *inst_type, size_t inst_size,
-			 xlat_detach_t detach,
-			 xlat_thread_instantiate_t thread_instantiate,
-			 char const *thread_inst_type, size_t thread_inst_size,
-			 xlat_thread_detach_t thread_detach,
-			 void *uctx)
+xlat_t const *xlat_async_register(TALLOC_CTX *ctx, char const *name, xlat_func_async_t func)
 {
 	xlat_t	*c;
 	bool	new = false;
@@ -2075,7 +2152,7 @@ int _xlat_async_register(TALLOC_CTX *ctx,
 
 	if (!name || !*name) {
 		ERROR("%s: Invalid xlat name", __FUNCTION__);
-		return -1;
+		return NULL;
 	}
 
 	/*
@@ -2085,12 +2162,12 @@ int _xlat_async_register(TALLOC_CTX *ctx,
 	if (c) {
 		if (c->internal) {
 			ERROR("%s: Cannot re-define internal expansion %s", __FUNCTION__, name);
-			return -1;
+			return NULL;
 		}
 
 		if (!c->async_safe) {
 			ERROR("%s: Cannot change async capability of %s", __FUNCTION__, name);
-			return -1;
+			return NULL;
 		}
 
 	/*
@@ -2105,31 +2182,78 @@ int _xlat_async_register(TALLOC_CTX *ctx,
 
 	c->func.async = func;
 	c->type = XLAT_FUNC_ASYNC;
-
-	c->instantiate = instantiate;
-	c->thread_instantiate = thread_instantiate;
-
-	c->inst_type = inst_type;
-	c->inst_size = inst_size;
-
-	c->thread_inst_type = thread_inst_type;
-	c->thread_inst_size = thread_inst_size;
-
-	c->detach = detach;
-	c->thread_detach = thread_detach;
-
 	c->async_safe = false;	/* async safe in this case means it might yield */
-	c->uctx = uctx;
 
 	DEBUG3("%s: %s", __FUNCTION__, c->name);
 
 	if (new && !rbtree_insert(xlat_root, c)) {
 		ERROR("%s: Failed inserting xlat registration for %s", __FUNCTION__, c->name);
 		talloc_free(c);
-		return -1;
+		return NULL;
 	}
 
-	return 0;
+	return c;
+}
+
+/** Set global instantiation/detach callbacks
+ *
+ * All functions registered must be async_safe.
+ *
+ * @param[in] xlat		to set instantiation callbacks for.
+ * @param[in] instantiate	Instantiation function. Called whenever a xlat is
+ *				compiled.
+ * @param[in] inst_type		Name of the instance structure.
+ * @param[in] inst_size		The size of the instance struct.
+ *				Pre-allocated for use by the instantiate function.
+ *				If 0, no memory will be allocated.
+ * @param[in] detach		Called when an xlat_exp_t is freed.
+ * @param[in] uctx		Passed to the instantiation function.
+ */
+void _xlat_async_instantiate_set(xlat_t const *xlat,
+				 xlat_instantiate_t instantiate, char const *inst_type, size_t inst_size,
+				 xlat_detach_t detach,
+				 void *uctx)
+{
+	xlat_t *c;
+
+	memcpy(&c, &xlat, sizeof(c));
+
+	c->instantiate = instantiate;
+	c->inst_type = inst_type;
+	c->inst_size = inst_size;
+	c->detach = detach;
+	c->uctx = uctx;
+}
+
+/** Register an async xlat
+ *
+ * All functions registered must be async_safe.
+ *
+ * @param[in] xlat			to set instantiation callbacks for.
+ * @param[in] thread_instantiate	Instantiation function. Called for every compiled xlat
+ *					every time a thread is started.
+ * @param[in] thread_inst_type		Name of the thread instance structure.
+ * @param[in] thread_inst_size		The size of the thread instance struct.
+ *					Pre-allocated for use by the instantiate function.
+ *					If 0, no memory will be allocated.
+ * @param[in] thread_detach		Called when the thread is freed.
+ * @param[in] uctx			Passed to the thread instantiate function.
+ */
+void _xlat_async_thread_instantiate_set(xlat_t const *xlat,
+					xlat_thread_instantiate_t thread_instantiate,
+				        char const *thread_inst_type, size_t thread_inst_size,
+				        xlat_thread_detach_t thread_detach,
+				        void *uctx)
+{
+	xlat_t *c;
+
+	memcpy(&c, &xlat, sizeof(c));
+
+	c->thread_instantiate = thread_instantiate;
+	c->thread_inst_type = thread_inst_type;
+	c->thread_inst_size = thread_inst_size;
+	c->thread_detach = thread_detach;
+	c->thread_uctx = uctx;
 }
 
 /** Unregister an xlat function
@@ -2240,7 +2364,9 @@ static xlat_action_t concat_xlat(TALLOC_CTX *ctx, fr_cursor_t *out,
 				 fr_value_box_t **in)
 {
 	fr_value_box_t *result;
+	fr_value_box_t *separator;
 	char *buff;
+	char const *sep;
 
 	/*
 	 *	If there's no input, there's no output
@@ -2248,9 +2374,17 @@ static xlat_action_t concat_xlat(TALLOC_CTX *ctx, fr_cursor_t *out,
 	if (!in) return XLAT_ACTION_DONE;
 
 	/*
-	 *	Otherwise, join the boxes together commas
-	 *	FIXME It'd be nice to set a custom delimiter
+	 * Separator is first value box
 	 */
+	separator = *in;
+
+	if (!separator) {
+		REDEBUG("Missing separator for concat xlat");
+		return XLAT_ACTION_FAIL;
+	}
+
+	sep = separator->vb_strvalue;
+
 	result = fr_value_box_alloc_null(ctx);
 	if (!result) {
 	error:
@@ -2258,10 +2392,10 @@ static xlat_action_t concat_xlat(TALLOC_CTX *ctx, fr_cursor_t *out,
 		return XLAT_ACTION_FAIL;
 	}
 
-	buff = fr_value_box_list_asprint(result, *in, ",", '\0');
+	buff = fr_value_box_list_asprint(result, (*in)->next, sep, '\0');
 	if (!buff) goto error;
 
-	fr_value_box_bstrsteal(result, result, NULL, buff, fr_value_box_list_tainted(*in));
+	fr_value_box_bstrsteal(result, result, NULL, buff, fr_value_box_list_tainted((*in)->next));
 
 	fr_cursor_insert(out, result);
 
@@ -2500,13 +2634,17 @@ int xlat_register_redundant(CONF_SECTION *cs)
  */
 int xlat_init(void)
 {
-	if (xlat_root) return 0;
-
 	xlat_t	*c;
 
 #ifdef WITH_UNLANG
 	int i;
 #endif
+	if (xlat_root) return 0;
+
+	/*
+	 *	Lookup attributes used by virtual xlat expansions.
+	 */
+	if (xlat_eval_init() < 0) return -1;
 
 	/*
 	 *	Registers async xlat operations in the `unlang` interpreter.
@@ -2545,11 +2683,6 @@ int xlat_init(void)
 	XLAT_REGISTER(module);
 	XLAT_REGISTER(debug_attr);
 
-	xlat_register(NULL, "pairs", pairs_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
-
-
-	xlat_register(NULL, "base64tohex", base64_to_hex_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
-
 	xlat_register(NULL, "explode", explode_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
 
 	xlat_register(NULL, "nexttime", next_time_xlat, NULL, NULL, 0, XLAT_DEFAULT_BUF_LEN, true);
@@ -2561,40 +2694,42 @@ int xlat_init(void)
 	rad_assert(c != NULL);
 	c->internal = true;
 
-	xlat_async_register(NULL, "base64", base64_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "bin", bin_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "concat", concat_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "hex", hex_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "hmacmd5", hmac_md5_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "hmacsha1", hmac_sha1_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "md4", md4_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "md5", md5_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "rand", rand_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "randstr", randstr_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+	xlat_async_register(NULL, "base64", base64_xlat);
+	xlat_async_register(NULL, "base64decode", xlat_base64_decode);
+	xlat_async_register(NULL, "bin", bin_xlat);
+	xlat_async_register(NULL, "concat", concat_xlat);
+	xlat_async_register(NULL, "hex", hex_xlat);
+	xlat_async_register(NULL, "hmacmd5", hmac_md5_xlat);
+	xlat_async_register(NULL, "hmacsha1", hmac_sha1_xlat);
+	xlat_async_register(NULL, "md4", md4_xlat);
+	xlat_async_register(NULL, "md5", md5_xlat);
+	xlat_async_register(NULL, "pairs", pairs_xlat);
+	xlat_async_register(NULL, "rand", rand_xlat);
+	xlat_async_register(NULL, "randstr", randstr_xlat);
 #if defined(HAVE_REGEX_PCRE) || defined(HAVE_REGEX_PCRE2)
-	xlat_async_register(NULL, "regex", regex_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+	xlat_async_register(NULL, "regex", regex_xlat);
 #endif
-	xlat_async_register(NULL, "sha1", sha1_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+	xlat_async_register(NULL, "sha1", sha1_xlat);
 
 #ifdef HAVE_OPENSSL_EVP_H
-	xlat_async_register(NULL, "sha224", sha224_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "sha256", sha256_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "sha384", sha384_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "sha512", sha512_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+	xlat_async_register(NULL, "sha224", sha224_xlat);
+	xlat_async_register(NULL, "sha256", sha256_xlat);
+	xlat_async_register(NULL, "sha384", sha384_xlat);
+	xlat_async_register(NULL, "sha512", sha512_xlat);
 
 #  ifdef HAVE_EVP_SHA3_512
-	xlat_async_register(NULL, "sha3_224", sha3_224_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "sha3_256", sha3_256_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "sha3_384", sha3_384_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "sha3_512", sha3_512_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+	xlat_async_register(NULL, "sha3_224", sha3_224_xlat);
+	xlat_async_register(NULL, "sha3_256", sha3_256_xlat);
+	xlat_async_register(NULL, "sha3_384", sha3_384_xlat);
+	xlat_async_register(NULL, "sha3_512", sha3_512_xlat);
 #  endif
 #endif
 
-	xlat_async_register(NULL, "string", string_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "tolower", tolower_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "toupper", toupper_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "urlquote", urlquote_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-	xlat_async_register(NULL, "urlunquote", urlunquote_xlat, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+	xlat_async_register(NULL, "string", string_xlat);
+	xlat_async_register(NULL, "tolower", tolower_xlat);
+	xlat_async_register(NULL, "toupper", toupper_xlat);
+	xlat_async_register(NULL, "urlquote", urlquote_xlat);
+	xlat_async_register(NULL, "urlunquote", urlunquote_xlat);
 
 	return 0;
 }
@@ -2605,6 +2740,11 @@ int xlat_init(void)
 void xlat_free(void)
 {
 	rbtree_t *xr = xlat_root;		/* Make sure the tree can't be freed multiple times */
+
+	if (!xr) return;
+
 	xlat_root = NULL;
 	talloc_free(xr);
+
+	xlat_eval_free();
 }

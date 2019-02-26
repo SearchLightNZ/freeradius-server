@@ -48,6 +48,12 @@ RCSID("$Id$")
 
 #include <ctype.h>
 
+#define EXIT_WITH_FAILURE \
+do { \
+	ret = EXIT_FAILURE; \
+	goto cleanup; \
+} while (0)
+
 /*
  *  Global variables.
  */
@@ -66,12 +72,14 @@ fr_dict_autoload_t unit_test_module_dict[] = {
 };
 
 static fr_dict_attr_t const *attr_auth_type;
+static fr_dict_attr_t const *attr_chap_password;
 static fr_dict_attr_t const *attr_digest_algorithm;
+static fr_dict_attr_t const *attr_digest_attributes;
 static fr_dict_attr_t const *attr_digest_body_digest;
 static fr_dict_attr_t const *attr_digest_cnonce;
 static fr_dict_attr_t const *attr_digest_method;
-static fr_dict_attr_t const *attr_digest_nonce;
 static fr_dict_attr_t const *attr_digest_nonce_count;
+static fr_dict_attr_t const *attr_digest_nonce;
 static fr_dict_attr_t const *attr_digest_qop;
 static fr_dict_attr_t const *attr_digest_realm;
 static fr_dict_attr_t const *attr_digest_uri;
@@ -84,8 +92,6 @@ static fr_dict_attr_t const *attr_packet_src_ipv6_address;
 static fr_dict_attr_t const *attr_packet_src_port;
 static fr_dict_attr_t const *attr_packet_type;
 static fr_dict_attr_t const *attr_response_packet_type;
-static fr_dict_attr_t const *attr_chap_password;
-static fr_dict_attr_t const *attr_digest_attributes;
 static fr_dict_attr_t const *attr_state;
 static fr_dict_attr_t const *attr_user_name;
 static fr_dict_attr_t const *attr_user_password;
@@ -109,10 +115,11 @@ fr_dict_attr_autoload_t unit_test_module_dict_attr[] = {
 	{ .out = &attr_packet_src_ip_address, .name = "Packet-Src-IP-Address", .type = FR_TYPE_IPV4_ADDR, .dict = &dict_freeradius },
 	{ .out = &attr_packet_src_ipv6_address, .name = "Packet-Src-IPv6-Address", .type = FR_TYPE_IPV6_ADDR, .dict = &dict_freeradius },
 	{ .out = &attr_packet_src_port, .name = "Packet-Src-Port", .type = FR_TYPE_UINT16, .dict = &dict_freeradius },
-	{ .out = &attr_packet_type, .name = "Packet-Type", .type = FR_TYPE_UINT32, .dict = &dict_freeradius },
-	{ .out = &attr_response_packet_type, .name = "Response-Packet-Type", .type = FR_TYPE_UINT32, .dict = &dict_freeradius },
+
 	{ .out = &attr_chap_password, .name = "CHAP-Password", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
 	{ .out = &attr_digest_attributes, .name = "Digest-Attributes", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
+	{ .out = &attr_packet_type, .name = "Packet-Type", .type = FR_TYPE_UINT32, .dict = &dict_radius },
+	{ .out = &attr_response_packet_type, .name = "Response-Packet-Type", .type = FR_TYPE_UINT32, .dict = &dict_radius },
 	{ .out = &attr_state, .name = "State", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
 	{ .out = &attr_user_name, .name = "User-Name", .type = FR_TYPE_STRING, .dict = &dict_radius },
 	{ .out = &attr_user_password, .name = "User-Password", .type = FR_TYPE_STRING, .dict = &dict_radius },
@@ -575,8 +582,8 @@ static rlm_rcode_t mod_map_proc(UNUSED void *mod_inst, UNUSED void *proc_inst, U
  */
 int main(int argc, char *argv[])
 {
-	int			rcode = EXIT_SUCCESS;
-	int			argval;
+	int			ret = EXIT_SUCCESS;
+	int			c;
 	const char 		*input_file = NULL;
 	const char		*output_file = NULL;
 	const char		*filter_file = NULL;
@@ -640,9 +647,8 @@ int main(int argc, char *argv[])
 	default_log.fd = STDOUT_FILENO;
 
 	/*  Process the options.  */
-	while ((argval = getopt(argc, argv, "d:D:f:hi:mMn:o:O:xX")) != EOF) {
-
-		switch (argval) {
+	while ((c = getopt(argc, argv, "d:D:f:hi:mMn:o:O:xX")) != -1) {
+		switch (c) {
 			case 'd':
 				main_config_raddb_dir_set(config, optarg);
 				break;
@@ -698,6 +704,23 @@ int main(int argc, char *argv[])
 		}
 	}
 
+#ifdef HAVE_OPENSSL_CRYPTO_H
+	/*
+	 *  Mismatch between build time OpenSSL and linked SSL, better to die
+	 *  here than segfault later.
+	 */
+	if (ssl_check_consistency() < 0) EXIT_WITH_FAILURE;
+
+	/*
+	 *  Initialising OpenSSL once, here, is safer than having individual modules do it.
+	 *  Must be called before display_version to ensure relevant engines are loaded.
+	 *
+	 *  tls_init() must be called before *ANY* OpenSSL functions are used, which is why
+	 *  it's called so early.
+	 */
+	if (tls_init() < 0) EXIT_WITH_FAILURE;
+#endif
+
 	if (rad_debug_lvl) dependency_version_print();
 	fr_debug_lvl = rad_debug_lvl;
 
@@ -706,69 +729,54 @@ int main(int argc, char *argv[])
 	 */
 	if (fr_check_lib_magic(RADIUSD_MAGIC_NUMBER) < 0) {
 		fr_perror("%s", config->name);
-		rcode = EXIT_FAILURE;
-		goto finish;
+		ret = EXIT_FAILURE;
+		goto cleanup;
 	}
 
 	dl_loader_init(autofree, config->lib_dir);
 
 	if (fr_dict_global_init(autofree, config->dict_dir) < 0) {
 		fr_perror("%s", config->name);
-		rcode = EXIT_FAILURE;
-		goto finish;
+		EXIT_WITH_FAILURE;
 	}
 
 	if (fr_dict_internal_afrom_file(&dict, FR_DICTIONARY_INTERNAL_DIR) < 0) {
 		fr_perror("%s", config->name);
-		rcode = EXIT_FAILURE;
-		goto finish;
+		EXIT_WITH_FAILURE;
 	}
+
+#ifdef HAVE_OPENSSL_CRYPTO_H
+	if (tls_dict_init() < 0) EXIT_WITH_FAILURE;
+#endif
 
 	/*
 	 *	Load the custom dictionary
 	 */
 	if (fr_dict_read(dict, config->raddb_dir, FR_DICTIONARY_FILE) == -1) {
 		fr_log_perror(&default_log, L_ERR, "Failed to initialize the dictionaries");
-		rcode = EXIT_FAILURE;
-		goto finish;
+		EXIT_WITH_FAILURE;
 	}
 
 	if (fr_dict_autoload(unit_test_module_dict) < 0) {
 		fr_perror("%s", config->name);
-		rcode = EXIT_FAILURE;
-		goto finish;
+		EXIT_WITH_FAILURE;
 	}
 	if (fr_dict_attr_autoload(unit_test_module_dict_attr) < 0) {
 		fr_perror("%s", config->name);
-		rcode = EXIT_FAILURE;
-		goto finish;
+		EXIT_WITH_FAILURE;
 	}
 
 	if (log_global_init(&default_log, false) < 0) {
-		rcode = EXIT_FAILURE;
-		goto finish;
+		EXIT_WITH_FAILURE;
 	}
-
-	/*
-	 *  Initialising OpenSSL once, here, is safer than having individual modules do it.
-	 */
-#ifdef HAVE_OPENSSL_CRYPTO_H
-	if (tls_init() < 0) {
-		rcode = EXIT_FAILURE;
-		goto finish;
-	}
-#endif
 
 	if (map_proc_register(NULL, "test-fail", mod_map_proc, map_proc_verify, 0) < 0) {
-		rcode = EXIT_FAILURE;
-		goto finish;
+		EXIT_WITH_FAILURE;
 	}
 
 	/*  Read the configuration files, BEFORE doing anything else.  */
 	if (main_config_init(config) < 0) {
-	exit_failure:
-		rcode = EXIT_FAILURE;
-		goto finish;
+		EXIT_WITH_FAILURE;
 	}
 
 	/*
@@ -779,8 +787,8 @@ int main(int argc, char *argv[])
 		char const	*ip_str = "127.0.0.1";
 
 		if (fr_inet_pton(&ip, ip_str, strlen(ip_str), AF_UNSPEC, false, true) < 0) {
-			rcode = EXIT_FAILURE;
-			goto finish;
+			ret = EXIT_FAILURE;
+			goto cleanup;
 		}
 
 		client = client_find(NULL, &ip, IPPROTO_IP);
@@ -820,14 +828,19 @@ int main(int argc, char *argv[])
 	/*
 	 *	Initialise the interpreter, registering operations.
 	 */
-	if (unlang_init() < 0) goto exit_failure;
+	if (unlang_init() < 0) EXIT_WITH_FAILURE;
+
+	/*
+	 *	Explicitly initialise the xlat tree, and perform dictionary lookups.
+	 */
+	if (xlat_init() < 0) EXIT_WITH_FAILURE;
 
 	/*
 	 *	Initialize Auth-Type, etc. in the virtual servers
 	 *	before loading the modules.  Some modules need those
 	 *	to be defined.
 	 */
-	if (virtual_servers_bootstrap(config->root_cs) < 0) goto exit_failure;
+	if (virtual_servers_bootstrap(config->root_cs) < 0) EXIT_WITH_FAILURE;
 
 	/*
 	 *	Bootstrap the modules.  This links to them, and runs
@@ -835,12 +848,12 @@ int main(int argc, char *argv[])
 	 *
 	 *	After this step, all dynamic attributes, xlats, etc. are defined.
 	 */
-	if (modules_bootstrap(config->root_cs) < 0) goto exit_failure;
+	if (modules_bootstrap(config->root_cs) < 0) EXIT_WITH_FAILURE;
 
 	/*
 	 *	Instantiate the modules
 	 */
-	if (modules_instantiate(config->root_cs) < 0) goto exit_failure;
+	if (modules_instantiate(config->root_cs) < 0) EXIT_WITH_FAILURE;
 
 	/*
 	 *	Create a dummy event list
@@ -851,23 +864,23 @@ int main(int argc, char *argv[])
 	/*
 	 *	And then load the virtual servers.
 	 */
-	if (virtual_servers_instantiate() < 0) goto exit_failure;
+	if (virtual_servers_instantiate() < 0) EXIT_WITH_FAILURE;
 
 	/*
 	 *	Call xlat instantiation functions (after the xlats have been compiled)
 	 */
-	if (xlat_instantiate() < 0) goto exit_failure;
+	if (xlat_instantiate() < 0) EXIT_WITH_FAILURE;
 
 	/*
 	 *	Instantiate "permanent" paircmps
 	 */
-	if (paircmp_init() < 0) goto exit_failure;
+	if (paircmp_init() < 0) EXIT_WITH_FAILURE;
 
 	/*
 	 *	Simulate thread specific instantiation
 	 */
-	if (modules_thread_instantiate(thread_ctx, config->root_cs, el) < 0) goto exit_failure;
-	if (xlat_thread_instantiate(thread_ctx) < 0) goto exit_failure;
+	if (modules_thread_instantiate(thread_ctx, config->root_cs, el) < 0) EXIT_WITH_FAILURE;
+	if (xlat_thread_instantiate(thread_ctx) < 0) EXIT_WITH_FAILURE;
 
 	state = fr_state_tree_init(autofree, attr_state, false, 256, 10, 0);
 
@@ -882,7 +895,7 @@ int main(int argc, char *argv[])
 
 		if (panic_action && (fr_fault_setup(autofree, panic_action, argv[0]) < 0)) {
 			fr_perror("%s", config->name);
-			goto exit_failure;
+			EXIT_WITH_FAILURE;
 		}
 	}
 
@@ -895,7 +908,7 @@ int main(int argc, char *argv[])
 		if (!fp) {
 			fprintf(stderr, "Failed reading %s: %s\n",
 				input_file, fr_syserror(errno));
-			goto exit_failure;
+			EXIT_WITH_FAILURE;
 		}
 	}
 
@@ -903,9 +916,9 @@ int main(int argc, char *argv[])
 	 *	For simplicity, read xlat's.
 	 */
 	if (xlat_only) {
-		if (!do_xlats(input_file, fp)) rcode = EXIT_FAILURE;
+		if (!do_xlats(input_file, fp)) ret = EXIT_FAILURE;
 		if (input_file) fclose(fp);
-		goto finish;
+		goto cleanup;
 	}
 
 	/*
@@ -914,7 +927,7 @@ int main(int argc, char *argv[])
 	request = request_from_file(fp, el, client);
 	if (!request) {
 		fprintf(stderr, "Failed reading input: %s\n", fr_strerror());
-		goto exit_failure;
+		EXIT_WITH_FAILURE;
 	}
 	request->el = el;
 
@@ -942,14 +955,14 @@ int main(int argc, char *argv[])
 			fp = fopen(filter_file, "r");
 			if (!fp) {
 				fprintf(stderr, "Failed reading %s: %s\n", filter_file, fr_syserror(errno));
-				goto exit_failure;
+				EXIT_WITH_FAILURE;
 			}
 		}
 
 		if (fr_pair_list_afrom_file(request, dict_radius, &filter_vps, fp, &filedone) < 0) {
 			fprintf(stderr, "Failed reading attributes from %s: %s\n",
 				filter_file, fr_strerror());
-			goto exit_failure;
+			EXIT_WITH_FAILURE;
 		}
 
 		/*
@@ -958,7 +971,7 @@ int main(int argc, char *argv[])
 		if (!filter_vps) {
 			fprintf(stderr, "No attributes in filter file %s\n",
 				filter_file);
-			goto exit_failure;
+			EXIT_WITH_FAILURE;
 		}
 
 		/*
@@ -1058,13 +1071,13 @@ done:
 			fr_pair_validate_debug(request, failed);
 			fr_perror("Output file %s does not match attributes in filter %s (%s)",
 				  output_file ? output_file : input_file, filter_file, fr_strerror());
-			goto exit_failure;
+			EXIT_WITH_FAILURE;
 		}
 	}
 
 	INFO("Exiting normally");
 
-finish:
+cleanup:
 	talloc_free(request);
 	talloc_free(state);
 
@@ -1135,11 +1148,18 @@ finish:
 	fr_dict_free(&dict);
 
 	/*
-	 *	Free the strerror buffer.
+	 *	Call pthread destructors.  Which aren't normally
+	 *	called for the main thread.
+	 *
+	 *	Note that pthread_exit() never returns, and always
+	 *	causes the process to exit with status '0'.  So we
+	 *	check for test failure here, and if so, don't call the
+	 *	destructors.  If the tests fail, who cares about
+	 *	memory leaks...
 	 */
-	fr_strerror_free();
+	if (ret != 0) return ret;
 
-	return rcode;
+	pthread_exit(NULL);
 }
 
 

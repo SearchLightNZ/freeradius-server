@@ -27,7 +27,7 @@ static char spaces[] = "                                                 ";
 
 void fr_proto_print(char const *file, int line, char const *fmt, ...)
 {
-	va_list ap;
+	va_list		ap;
 	size_t		len;
 	char		prefix[256];
 
@@ -44,25 +44,36 @@ void fr_proto_print(char const *file, int line, char const *fmt, ...)
 	fflush(fr_log_fp);
 }
 
-void fr_proto_print_hex_data(char const *file, int line, char const *msg, uint8_t const *data, size_t data_len)
+DIAG_OFF(format-nonliteral)
+void fr_proto_print_hex_data(char const *file, int line, uint8_t const *data, size_t data_len, char const *fmt, ...)
 {
+	va_list		ap;
 	size_t		i;
 	size_t		len;
 	char		prefix[256];
+	char		msg[256];
 
 	len = snprintf(prefix, sizeof(prefix), "%s:%i", file, line);
 	if (len > proto_log_indent) proto_log_indent = len;
 
-	if (msg) fprintf(fr_log_fp, "hex: %s%.*s: -- %s --\n", prefix, (int)(proto_log_indent - len), spaces, msg);
+	if (fmt) {
+		va_start(ap, fmt);
+		vsnprintf(msg, sizeof(msg), fmt, ap);
+		va_end(ap);
+		fprintf(fr_log_fp, "hex: %s%.*s: -- %s --\n",
+			prefix, (int)(proto_log_indent - len), spaces, msg);
+	}
+
 	for (i = 0; i < data_len; i++) {
 		if ((i & 0x0f) == 0) fprintf(fr_log_fp, "hex: %s%.*s: %04x: ", prefix,
 					     (int)(proto_log_indent - len), spaces, (unsigned int) i);
 		fprintf(fr_log_fp, "%02x ", data[i]);
-		if ((i & 0x0f) == 0x0f) fprintf(fr_log_fp, "\n");
+		if (((i & 0x0f) == 0x0f) && ((i + 1) < data_len)) fprintf(fr_log_fp, "\n");
 	}
 	if ((data_len == 0x0f) || ((data_len & 0x0f) != 0x0f)) fprintf(fr_log_fp, "\n");
 	fflush(fr_log_fp);
 }
+DIAG_ON(format-nonliteral)
 
 void fr_proto_tlv_stack_print(char const *file, int line, char const *func, fr_dict_attr_t const **tlv_stack, unsigned int depth)
 {
@@ -81,12 +92,13 @@ void fr_proto_tlv_stack_print(char const *file, int line, char const *func, fr_d
 	for (i--; i >= 0; i--) {
 		fprintf(fr_log_fp, "stk: %s%.*s: %s [%i] %s: %s, vendor: 0x%x (%u), attr: 0x%x (%u)\n",
 			prefix, (int)(proto_log_indent - len), spaces, (i == (int)depth) ? ">" : " ", i,
-			fr_int2str(fr_value_box_type_names, tlv_stack[i]->type, "?Unknown?"),
+			fr_int2str(fr_value_box_type_table, tlv_stack[i]->type, "?Unknown?"),
 			tlv_stack[i]->name,
 			fr_dict_vendor_num_by_da(tlv_stack[i]), fr_dict_vendor_num_by_da(tlv_stack[i]),
 			tlv_stack[i]->attr, tlv_stack[i]->attr);
 	}
-	fprintf(fr_log_fp, "\n");
+	fprintf(fr_log_fp, "stk: %s%.*s:\n",
+		prefix, (int)(proto_log_indent - len), spaces);
 	fflush(fr_log_fp);
 }
 

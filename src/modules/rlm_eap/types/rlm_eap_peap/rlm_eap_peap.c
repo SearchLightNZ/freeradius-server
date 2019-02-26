@@ -218,10 +218,16 @@ static rlm_rcode_t mod_process(void *instance, eap_session_t *eap_session)
 		break;
 
 	case RLM_MODULE_OK:
+	{
+		static char keying_prf_label[] = "client EAP encryption";
+
 		/*
 		 *	Success: Automatically return MPPE keys.
 		 */
-		if (eap_tls_success(eap_session) < 0) return 0;
+		if (eap_tls_success(eap_session,
+				    keying_prf_label, sizeof(keying_prf_label) - 1,
+				    NULL, 0) < 0) return 0;
+	}
 		break;
 
 		/*
@@ -269,11 +275,6 @@ static rlm_rcode_t mod_session_init(void *type_arg, eap_session_t *eap_session)
 
 	eap_session->opaque = eap_tls_session = eap_tls_session_init(eap_session, inst->tls_conf, client_cert);
 	if (!eap_tls_session) return RLM_MODULE_FAIL;
-
-	/*
-	 *	Set up type-specific information.
-	 */
-	eap_tls_session->tls_session->prf_label = "client EAP encryption";
 
 	/*
 	 *	As it is a poorly designed protocol, PEAP uses

@@ -432,15 +432,14 @@ void dependency_features_init(CONF_SECTION *cs)
 #endif
 				);
 
-#ifdef WITH_TLS
+
 	dependency_feature_add(cs, "tls-key-agility",
-#  if OPENSSL_VERSION_NUMBER >= 0x10002000L
+#ifdef WITH_TLS
 				true
-#  else
+#else
 				false
-#  endif
-				);
 #endif
+				);
 
 	dependency_feature_add(cs, "unlang",
 #ifdef WITH_UNLANG
@@ -653,7 +652,7 @@ void dependency_version_print(void)
 		DEBUG2("  ");
 	}
 	INFO("FreeRADIUS Version " RADIUSD_VERSION_STRING);
-	INFO("Copyright 1999-2018 The FreeRADIUS server project and contributors");
+	INFO("Copyright 1999-2019 The FreeRADIUS server project and contributors");
 	INFO("There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A");
 	INFO("PARTICULAR PURPOSE");
 	INFO("You may redistribute copies of FreeRADIUS under the terms of the");

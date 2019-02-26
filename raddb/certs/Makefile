@@ -61,14 +61,14 @@ passwords.mk: server.cnf ca.cnf client.cnf inner-server.cnf ocsp.cnf
 #  Output directories
 #
 ######################################################################
-OUTPUT_DIRS := rsa ecc
+OUTPUT_DIRS := rsa/ ecc/
 
-.PHONY: rsa
-rsa:
+.PHONY: rsa/
+rsa/:
 	@mkdir -p $@
 
-.PHONY: rsa
-ecc:
+.PHONY: ecc/
+ecc/:
 	@mkdir -p $@
 
 ######################################################################
@@ -77,7 +77,7 @@ ecc:
 #
 ######################################################################
 dh:
-	openssl dhparam -outform PEM -out dh -2 $(DH_KEY_SIZE)
+	openssl dhparam -dsaparam -outform PEM -out dh $(DH_KEY_SIZE)
 
 ######################################################################
 #
@@ -221,8 +221,8 @@ rsa/client.pem: rsa/client.p12
 
 .PHONY: rsa/client.vrfy
 rsa/client.vrfy: rsa/ca.pem rsa/client.pem
-	c_rehash .
-	openssl verify -CApath . rsa/client.pem
+	c_rehash rsa/
+	openssl verify -CApath rsa/ rsa/client.pem
 
 ######################################################################
 #
@@ -247,8 +247,8 @@ ecc/client.pem: ecc/client.p12
 
 .PHONY: ecc/client.vrfy
 ecc/client.vrfy: ecc/ca.pem ecc/client.pem
-	c_rehash .
-	openssl verify -CApath . ecc/client.pem
+	c_rehash ecc/
+	openssl verify -CApath ecc/ ecc/client.pem
 
 ######################################################################
 #
@@ -327,4 +327,4 @@ clean:
 #	Make a target that people won't run too often.
 #
 distclean:
-	rm -rf *~ dh ecc/ rsa/ index.txt* serial*  *\.0 *\.1
+	rm -rf *~ *.pem dh ecc/ rsa/ passwords.mk index.txt* serial*  *\.0 *\.1

@@ -39,7 +39,9 @@ USES_APPLE_DEPRECATED_API	/* OpenSSL API has been deprecated by Apple */
 #include <freeradius-devel/server/module.h>
 #include <freeradius-devel/server/rad_assert.h>
 #include <freeradius-devel/util/syserror.h>
-#include <freeradius-devel/tls/base.h>
+
+#include "base.h"
+#include "missing.h"
 
 /** Certificate formats
  *
@@ -52,19 +54,15 @@ static const FR_NAME_NUMBER certificate_format_table[] = {
 	{ NULL,		0			},
 };
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 static const FR_NAME_NUMBER chain_verify_mode_table[] = {
 	{ "hard",	FR_TLS_CHAIN_VERIFY_HARD },
 	{ "soft",	FR_TLS_CHAIN_VERIFY_SOFT },
 	{ "none",	FR_TLS_CHAIN_VERIFY_NONE },
 	{ NULL,		0			 },
 };
-#endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 static int chain_verify_mode_parse(UNUSED TALLOC_CTX *ctx, void *out, UNUSED void *parent,
 				   CONF_ITEM *ci, UNUSED CONF_PARSER const *rule);
-#endif
 static int certificate_format_type_parse(UNUSED TALLOC_CTX *ctx, void *out, UNUSED void *parent,
 					 CONF_ITEM *ci, UNUSED CONF_PARSER const *rule);
 
@@ -115,12 +113,10 @@ static CONF_PARSER tls_chain_config[] = {
 	{ FR_CONF_OFFSET("private_key_password", FR_TYPE_STRING | FR_TYPE_SECRET, fr_tls_chain_conf_t, password) },
 	{ FR_CONF_OFFSET("private_key_file", FR_TYPE_FILE_INPUT | FR_TYPE_REQUIRED, fr_tls_chain_conf_t, private_key_file) },
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 	{ FR_CONF_OFFSET("ca_file", FR_TYPE_FILE_INPUT | FR_TYPE_MULTI, fr_tls_chain_conf_t, ca_files) },
 
 	{ FR_CONF_OFFSET("verify_mode", FR_TYPE_VOID, fr_tls_chain_conf_t, verify_mode), .dflt = "hard", .func = chain_verify_mode_parse },
 	{ FR_CONF_OFFSET("include_root_ca", FR_TYPE_BOOL, fr_tls_chain_conf_t, include_root_ca), .dflt = "no" },
-#endif
 	CONF_PARSER_TERMINATOR
 };
 
@@ -129,7 +125,7 @@ CONF_PARSER tls_server_config[] = {
 
 	{ FR_CONF_OFFSET("chain", FR_TYPE_SUBSECTION | FR_TYPE_MULTI, fr_tls_conf_t, chains),
 	  .subcs_size = sizeof(fr_tls_chain_conf_t), .subcs_type = "fr_tls_chain_conf_t",
-	  .subcs = tls_chain_config },
+	  .subcs = tls_chain_config, .ident2 = CF_IDENT_ANY },
 
 	{ FR_CONF_DEPRECATED("pem_file_type", FR_TYPE_BOOL, fr_tls_conf_t, NULL) },
 	{ FR_CONF_DEPRECATED("certificate_file", FR_TYPE_FILE_INPUT, fr_tls_conf_t, NULL) },
@@ -145,7 +141,6 @@ CONF_PARSER tls_server_config[] = {
 	{ FR_CONF_OFFSET("psk_query", FR_TYPE_STRING, fr_tls_conf_t, psk_query) },
 #endif
 	{ FR_CONF_OFFSET("dh_file", FR_TYPE_FILE_INPUT, fr_tls_conf_t, dh_file) },
-	{ FR_CONF_OFFSET("random_file", FR_TYPE_FILE_EXISTS, fr_tls_conf_t, random_file) },
 	{ FR_CONF_OFFSET("fragment_size", FR_TYPE_UINT32, fr_tls_conf_t, fragment_size), .dflt = "1024" },
 
 	{ FR_CONF_OFFSET("disable_single_dh_use", FR_TYPE_BOOL, fr_tls_conf_t, disable_single_dh_use) },
@@ -163,10 +158,8 @@ CONF_PARSER tls_server_config[] = {
 	{ FR_CONF_OFFSET("check_cert_issuer", FR_TYPE_STRING, fr_tls_conf_t, check_cert_issuer) },
 	{ FR_CONF_OFFSET("require_client_cert", FR_TYPE_BOOL, fr_tls_conf_t, require_client_cert) },
 
-#if OPENSSL_VERSION_NUMBER >= 0x0090800fL
 #ifndef OPENSSL_NO_ECDH
 	{ FR_CONF_OFFSET("ecdh_curve", FR_TYPE_STRING, fr_tls_conf_t, ecdh_curve), .dflt = "prime256v1" },
-#endif
 #endif
 	{ FR_CONF_OFFSET("tls_max_version", FR_TYPE_FLOAT32, fr_tls_conf_t, tls_max_version) },
 
@@ -206,10 +199,8 @@ CONF_PARSER tls_client_config[] = {
 	{ FR_CONF_OFFSET("cipher_list", FR_TYPE_STRING, fr_tls_conf_t, cipher_list) },
 	{ FR_CONF_OFFSET("check_cert_issuer", FR_TYPE_STRING, fr_tls_conf_t, check_cert_issuer) },
 
-#if OPENSSL_VERSION_NUMBER >= 0x0090800fL
 #ifndef OPENSSL_NO_ECDH
 	{ FR_CONF_OFFSET("ecdh_curve", FR_TYPE_STRING, fr_tls_conf_t, ecdh_curve), .dflt = "prime256v1" },
-#endif
 #endif
 
 	{ FR_CONF_OFFSET("tls_max_version", FR_TYPE_FLOAT32, fr_tls_conf_t, tls_max_version) },
@@ -219,7 +210,6 @@ CONF_PARSER tls_client_config[] = {
 	CONF_PARSER_TERMINATOR
 };
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 /** Calls to convert verify_mode strings into macros
  *
  * @param[in] ctx	to allocate data in.
@@ -247,7 +237,6 @@ static int chain_verify_mode_parse(UNUSED TALLOC_CTX *ctx, void *out, UNUSED voi
 
 	return 0;
 }
-#endif
 
 /** Calls to convert format strings to OpenSSL macros
  *
@@ -526,17 +515,6 @@ fr_tls_conf_t *tls_conf_parse_server(CONF_SECTION *cs)
 
 		if (tls_ocsp_staple_cache_compile(&conf->staple.cache, server_cs) < 0) goto error;
 	}
-
-#ifdef SSL_OP_NO_TLSv1_2
-	/*
-	 *	OpenSSL 1.0.1f and 1.0.1g get the MS-MPPE keys wrong.
-	 */
-#if (OPENSSL_VERSION_NUMBER >= 0x10010060L) && (OPENSSL_VERSION_NUMBER < 0x10010060L)
-	conf->max_tls_version = 1.1;
-	WARN("OpenSSL version in range 1.0.1f-1.0.1g. "
-	     "TLSv1.2 disabled to workaround broken keying material export");
-#endif
-#endif
 
 	/*
 	 *	Cache conf in cs in case we're asked to parse this again.

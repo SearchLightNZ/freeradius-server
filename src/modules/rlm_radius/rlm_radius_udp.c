@@ -826,6 +826,23 @@ static void conn_finished_request(fr_io_connection_t *c, fr_io_request_t *u)
 // ATD END
 
 
+static int conn_timeout_init(fr_event_list_t *el, fr_io_request_t *u, fr_event_cb_t callback)
+{
+	u->time_sent = fr_time();
+	fr_time_to_timeval(&u->timer.start, u->time_sent);
+
+	if (rr_track_start(&u->timer) < 0) {
+		return -1;
+	}
+
+	if (fr_event_timer_insert(u, el, &u->timer.ev, &u->timer.next,
+				  callback, u) < 0) {
+		return -1;
+	}
+
+	return 0;
+}
+
 /** Deal with status check timeouts for transmissions, etc.
  *
  */
@@ -865,7 +882,7 @@ static void status_check_timeout(fr_event_list_t *el, struct timeval *now, void 
 	 *	Insert the next retransmission timer.
 	 */
 	if (fr_event_timer_insert(u, el, &u->timer.ev, &u->timer.next, status_check_timeout, u) < 0) {
-		RDEBUG("Failed inserting retransmission timer for status check - closing connection %s", c->name);
+		REDEBUG("Failed inserting retransmission timer for status check - closing connection %s", c->name);
 		talloc_free(c);
 		return;
 	}
@@ -1019,18 +1036,7 @@ static void conn_zombie_timeout(UNUSED fr_event_list_t *el, UNUSED struct timeva
 	/*
 	 *	Start the timers for status checks.
 	 */
-	u->time_sent = fr_time();
-	fr_time_to_timeval(&u->timer.start, u->time_sent);
-
-	if (rr_track_start(&u->timer) < 0) {
-		DEBUG("%s - Failed starting retransmit tracking for connection %s",
-		      c->module_name, c->name);
-		talloc_free(c);
-		return;
-	}
-
-	if (fr_event_timer_insert(u, c->thread->el, &u->timer.ev, &u->timer.next,
-				  status_check_timeout, u) < 0) {
+	if (conn_timeout_init(c->thread->el, u, status_check_timeout) < 0) {
 		DEBUG("%s - Failed starting retransmit tracking for connection %s",
 		      c->module_name, c->name);
 		talloc_free(c);
@@ -1174,6 +1180,8 @@ static void state_transition(fr_io_request_t *u, fr_io_request_state_t state, fr
 	}
 }
 
+/* ATD - all of this to "end" is 100% RADIUS only */
+
 /** Turn a reply code into a module rcode;
  *
  */
@@ -1280,6 +1288,7 @@ static void status_server_reply(fr_io_connection_t *c, fr_io_request_t *u, REQUE
 
 }
 
+/* ATD END */
 
 /** Read reply packets.
  *
@@ -1322,6 +1331,8 @@ check_active:
 		conn_error(el, fd, 0, errno, c);
 		return;
 	}
+
+ { /* RADIUS START - do various protocol-specific validations */
 
 	/*
 	 *	Replicating?  Drain the socket, but ignore all responses.
@@ -1533,6 +1544,7 @@ check_reply:
 		 */
 		if (u == radius->status_u) status_server_reply(c, u, request);
 	}
+} /* RADIUS END */
 
 done:
 	rad_assert(request != NULL);
@@ -2466,7 +2478,7 @@ static fr_connection_state_t _conn_failed(UNUSED int fd, fr_connection_state_t s
 static fr_connection_state_t _conn_open(UNUSED fr_event_list_t *el, int fd, void *uctx)
 {
 	fr_io_connection_t		*c = talloc_get_type_abort(uctx, fr_io_connection_t);
-	fr_io_connection_thread_t		*t = c->thread;
+	fr_io_connection_thread_t	*t = c->thread;
 	rlm_radius_udp_connection_t	*radius = c->ctx;
 
 	talloc_const_free(c->name);
@@ -2494,6 +2506,7 @@ static fr_connection_state_t _conn_open(UNUSED fr_event_list_t *el, int fd, void
 	memset(&c->zombie_start, 0, sizeof(c->zombie_start));
 	fr_dlist_init(&c->sent, fr_io_request_t, entry);
 
+{ /* RADIUS start */
 	/*
 	 *	Status-Server checks.  Manually build the packet, and
 	 *	all of it's associated glue.
@@ -2607,6 +2620,7 @@ static fr_connection_state_t _conn_open(UNUSED fr_event_list_t *el, int fd, void
 		u->timer.retry = &c->inst->parent->retry[u->code];
 		radius->status_check_blocked = false;
 	}
+} /* RADIUS end */
 
 	/*
 	 *	Now that we're open, assume that the connection is
@@ -2721,9 +2735,9 @@ static rlm_rcode_t mod_push(void *instance, REQUEST *request, void *request_io_c
 {
 	rlm_rcode_t    			rcode = RLM_MODULE_FAIL;
 	rlm_radius_udp_t		*inst = talloc_get_type_abort(instance, rlm_radius_udp_t);
-	fr_io_connection_thread_t		*t = talloc_get_type_abort(thread, fr_io_connection_thread_t);
-	fr_io_request_t	*u = talloc_get_type_abort(request_io_ctx, fr_io_request_t);
-	fr_io_connection_t	*c;
+	fr_io_connection_thread_t	*t = talloc_get_type_abort(thread, fr_io_connection_thread_t);
+	fr_io_request_t			*u = talloc_get_type_abort(request_io_ctx, fr_io_request_t);
+	fr_io_connection_t		*c;
 
 	rad_assert(request->packet->code > 0);
 	rad_assert(request->packet->code < FR_MAX_PACKET_CODE);
@@ -2757,30 +2771,16 @@ static rlm_rcode_t mod_push(void *instance, REQUEST *request, void *request_io_c
 	state_transition(u, REQUEST_IO_STATE_QUEUED, NULL);
 
 	/*
-	 *	Start the retransmission timers.
+	 *	If it's synchronous, remember the time we sent this
+	 *	packet.  Otherwise, start the retransmission timers.
 	 */
-	u->time_sent = fr_time();
+	if (inst->parent->synchronous) {
+		u->time_sent = fr_time();
 
-	/*
-	 *	Set up retransmission timers ONLY if we are
-	 *	responsible for retransmits.
-	 */
-	if (!inst->parent->synchronous) {
-		fr_time_to_timeval(&u->timer.start, u->time_sent);
-
-		if (rr_track_start(&u->timer) < 0) {
-			RDEBUG("%s - Failed starting retransmit tracking", inst->parent->name);
-			talloc_free(u);
-			return RLM_MODULE_FAIL;
-		}
-
-		if (fr_event_timer_insert(u, t->el, &u->timer.ev, &u->timer.next,
-					  response_timeout, u) < 0) {
-			RDEBUG("%s - Failed starting retransmit tracking",
-			       inst->parent->name);
-			talloc_free(u);
-			return RLM_MODULE_FAIL;
-		}
+	} else if (conn_timeout_init(t->el, u, response_timeout) < 0) {
+		RDEBUG("%s - Failed starting retransmit tracking", inst->parent->name);
+		talloc_free(u);
+		return RLM_MODULE_FAIL;
 	}
 
 	/*
@@ -2844,18 +2844,20 @@ static rlm_rcode_t mod_push(void *instance, REQUEST *request, void *request_io_c
 }
 
 
-static void mod_signal(REQUEST *request, UNUSED void *instance, UNUSED void *thread, void *request_io_ctx, fr_state_signal_t action)
+static void mod_signal(REQUEST *request, void *instance, UNUSED void *thread, void *request_io_ctx, fr_state_signal_t action)
 {
+	rlm_radius_udp_t *inst = talloc_get_type_abort(instance, rlm_radius_udp_t);
 	fr_io_request_t *u = talloc_get_type_abort(request_io_ctx, fr_io_request_t);
 	struct timeval now;
 
 	if (action != FR_SIGNAL_DUP) return;
 
 	/*
-	 *	Sychronous mode means that we don't do any
-	 *	retransmission, and instead we rely on the
-	 *	retransmission from the NAS.
+	 *	Asychronous mode means that we do retransmission, and
+	 *	we don't rely on the retransmission from the NAS.
 	 */
+	if (!inst->parent->synchronous) return;
+
 	RDEBUG("retransmitting proxied request");
 
 	gettimeofday(&now, NULL);

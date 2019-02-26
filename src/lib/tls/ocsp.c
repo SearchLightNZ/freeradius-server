@@ -36,8 +36,9 @@ USES_APPLE_DEPRECATED_API	/* OpenSSL API has been deprecated by Apple */
 
 #include <openssl/ocsp.h>
 
+#include "attrs.h"
 #include "base.h"
-#include "tls_attrs.h"
+#include "missing.h"
 
 /** Rcodes returned by the OCSP check function
  */
@@ -136,7 +137,7 @@ static int ocsp_staple_to_pair(VALUE_PAIR **out, REQUEST *request, OCSP_RESPONSE
 	uint8_t		*buff, *p;
 
 	if (!resp) {
-		RDEBUG("No response available");
+		REDEBUG("No OCSP response available");
 		return -1;
 	}
 
@@ -266,11 +267,9 @@ int tls_ocsp_check(REQUEST *request, SSL *ssl,
 	ocsp_status_t	status;
 	ASN1_GENERALIZEDTIME *rev, *this_update, *next_update;
 	int		reason;
-#if OPENSSL_VERSION_NUMBER >= 0x1000003f
 	OCSP_REQ_CTX	*ctx;
 	int		rc;
 	struct timeval	when;
-#endif
 	struct timeval	now = { 0, 0 };
 	time_t		next;
 	VALUE_PAIR	*vp;
@@ -409,17 +408,6 @@ int tls_ocsp_check(REQUEST *request, SSL *ssl,
 	conn = BIO_new_connect(host);
 	BIO_set_conn_port(conn, port);
 
-#if OPENSSL_VERSION_NUMBER < 0x1000003f
-	BIO_do_connect(conn);
-
-	/* Send OCSP request and wait for response */
-	resp = OCSP_sendreq_bio(conn, path, req);
-	if (!resp) {
-		REDEBUG("Couldn't get OCSP response");
-		ocsp_status = OCSP_STATUS_SKIPPED;
-		goto finish;
-	}
-#else
 	if (conf->timeout) BIO_set_nbio(conn, 1);
 
 	rc = BIO_do_connect(conn);
@@ -473,7 +461,6 @@ int tls_ocsp_check(REQUEST *request, SSL *ssl,
 		ocsp_status = OCSP_STATUS_SKIPPED;
 		goto finish;
 	}
-#endif /* OPENSSL_VERSION_NUMBER < 0x1000003f */
 
 	/* Verify OCSP response status */
 	status = OCSP_response_status(resp);

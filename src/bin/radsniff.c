@@ -93,7 +93,7 @@ static fr_dict_t *dict_radius;
 extern fr_dict_autoload_t radsniff_dict[];
 fr_dict_autoload_t radsniff_dict[] = {
 	{ .out = &dict_freeradius, .proto = "freeradius" },
-	{ .out = &dict_freeradius, .proto = "radius" },
+	{ .out = &dict_radius, .proto = "radius" },
 	{ NULL }
 };
 
@@ -101,7 +101,7 @@ static fr_dict_attr_t const *attr_packet_type;
 
 extern fr_dict_attr_autoload_t radsniff_dict_attr[];
 fr_dict_attr_autoload_t radsniff_dict_attr[] = {
-	{ .out = &attr_packet_type, .name = "Packet-Type", .type = FR_TYPE_UINT32, .dict = &dict_freeradius },
+	{ .out = &attr_packet_type, .name = "Packet-Type", .type = FR_TYPE_UINT32, .dict = &dict_radius },
 	{ NULL }
 };
 
@@ -2203,7 +2203,7 @@ int main(int argc, char *argv[])
 	char		errbuf[PCAP_ERRBUF_SIZE];			/* Error buffer */
 	int		port = FR_AUTH_UDP_PORT;
 
-	int		opt;
+	int		c;
 	char const	*raddb_dir = RADDBDIR;
 	char const	*dict_dir = DICTDIR;
 	TALLOC_CTX	*autofree = talloc_autofree_context();
@@ -2259,8 +2259,8 @@ int main(int argc, char *argv[])
 	/*
 	 *  Get options
 	 */
-	while ((opt = getopt(argc, argv, "ab:c:C:d:D:e:Ef:hi:I:l:L:mp:P:qr:R:s:Svw:xXW:T:P:N:O:")) != EOF) {
-		switch (opt) {
+	while ((c = getopt(argc, argv, "ab:c:C:d:D:e:Ef:hi:I:l:L:mp:P:qr:R:s:Svw:xXW:T:P:N:O:")) != -1) {
+		switch (c) {
 		case 'a':
 		{
 			pcap_if_t *all_devices = NULL;

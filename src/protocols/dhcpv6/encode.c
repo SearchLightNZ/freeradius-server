@@ -52,11 +52,6 @@ static inline bool is_encodable(fr_dict_attr_t const *root, VALUE_PAIR *vp)
 {
 	if (!vp) return false;
 	if (vp->da->flags.internal) return false;
-	/*
-	 *	Bool attribute presence is 'true' in SIM
-	 *	and absence is 'false'
-	 */
-	if ((vp->da->type == FR_TYPE_BOOL) && (vp->vp_bool == false)) return false;
 	if (!fr_dict_parent_common(root, vp->da, true)) return false;
 
 	return true;
@@ -143,7 +138,7 @@ static ssize_t encode_struct(uint8_t *out, size_t outlen,
 
 	if (tlv_stack[depth]->type != FR_TYPE_STRUCT) {
 		fr_strerror_printf("%s: Expected type \"struct\" got \"%s\"", __FUNCTION__,
-				   fr_int2str(fr_value_box_type_names, tlv_stack[depth]->type, "?Unknown?"));
+				   fr_int2str(fr_value_box_type_table, tlv_stack[depth]->type, "?Unknown?"));
 		return PAIR_ENCODE_ERROR;
 	}
 
@@ -194,7 +189,7 @@ static ssize_t encode_struct(uint8_t *out, size_t outlen,
 		if (struct_da != tlv_stack[depth]) break;
 		vp = fr_cursor_current(cursor);
 
-		FR_PROTO_HEX_DUMP("Done STRUCT", out, p - out);
+		FR_PROTO_HEX_DUMP(out, p - out, "Done STRUCT");
 	}
 
 	return p - out;
@@ -241,7 +236,7 @@ static ssize_t encode_value(uint8_t *out, size_t outlen,
 	switch (da->type) {
 	case FR_TYPE_STRUCTURAL:
 		fr_strerror_printf("%s: Called with structural type %s", __FUNCTION__,
-				   fr_int2str(fr_value_box_type_names, da->type, "?Unknown?"));
+				   fr_int2str(fr_value_box_type_table, da->type, "?Unknown?"));
 		return PAIR_ENCODE_ERROR;
 
 	default:
@@ -565,7 +560,7 @@ static ssize_t encode_tlv(uint8_t *out, size_t outlen,
 	}
 
 #ifndef NDEBUG
-	FR_PROTO_HEX_DUMP("Done TLV body", out, p - out);
+	FR_PROTO_HEX_DUMP(out, p - out, "Done TLV body");
 #endif
 
 	return p - out;
@@ -612,7 +607,7 @@ static ssize_t encode_rfc_hdr(uint8_t *out, size_t outlen,
 	if (slen < 0) return slen;
 
 #ifndef NDEBUG
-	FR_PROTO_HEX_DUMP("Done RFC header", out, p - out);
+	FR_PROTO_HEX_DUMP(out, p - out, "Done RFC header");
 #endif
 
 	return p - out;
@@ -631,7 +626,7 @@ static ssize_t encode_tlv_hdr(uint8_t *out, size_t outlen,
 
 	if (tlv_stack[depth]->type != FR_TYPE_TLV) {
 		fr_strerror_printf("%s: Expected type \"tlv\" got \"%s\"", __FUNCTION__,
-				   fr_int2str(fr_value_box_type_names, tlv_stack[depth]->type, "?Unknown?"));
+				   fr_int2str(fr_value_box_type_table, tlv_stack[depth]->type, "?Unknown?"));
 		return PAIR_ENCODE_ERROR;
 	}
 
@@ -658,7 +653,7 @@ static ssize_t encode_tlv_hdr(uint8_t *out, size_t outlen,
 	if (slen < 0) return slen;
 
 #ifndef NDEBUG
-	FR_PROTO_HEX_DUMP("Done TLV header", out, p - out);
+	FR_PROTO_HEX_DUMP(out, p - out, "Done TLV header");
 #endif
 
 	return p - out;
@@ -801,7 +796,7 @@ static ssize_t encode_vsio_suboption_hdr(uint8_t *out, size_t outlen,
 	}
 
 #ifndef NDEBUG
-	FR_PROTO_HEX_DUMP("Done VSIO body", out, end - p);
+	FR_PROTO_HEX_DUMP(out, end - p, "Done VSIO body");
 #endif
 
 	return p - out;
@@ -836,7 +831,7 @@ static ssize_t encode_vsio_hdr(uint8_t *out, size_t outlen,
 	 */
 	if (da->type != FR_TYPE_VSA) {
 		fr_strerror_printf("%s: Expected type \"vsa\" got \"%s\"", __FUNCTION__,
-				   fr_int2str(fr_value_box_type_names, da->type, "?Unknown?"));
+				   fr_int2str(fr_value_box_type_table, da->type, "?Unknown?"));
 		return PAIR_ENCODE_ERROR;
 	}
 
@@ -854,7 +849,7 @@ static ssize_t encode_vsio_hdr(uint8_t *out, size_t outlen,
 
 	if (da->type != FR_TYPE_VENDOR) {
 		fr_strerror_printf("%s: Expected type \"vsa\" got \"%s\"", __FUNCTION__,
-				   fr_int2str(fr_value_box_type_names, da->type, "?Unknown?"));
+				   fr_int2str(fr_value_box_type_table, da->type, "?Unknown?"));
 		return PAIR_ENCODE_ERROR;
 	}
 
@@ -877,7 +872,7 @@ static ssize_t encode_vsio_hdr(uint8_t *out, size_t outlen,
 	encode_option_hdr(out, outlen, da->attr, p - out);
 
 #ifndef NDEBUG
-	FR_PROTO_HEX_DUMP("Done VSIO header", out, end - p);
+	FR_PROTO_HEX_DUMP(out, end - p, "Done VSIO header");
 #endif
 
 	return p - out;
@@ -939,7 +934,7 @@ ssize_t fr_dhcpv6_encode_option(uint8_t *out, size_t outlen, fr_cursor_t *cursor
 	if (slen <= 0) return slen;
 
 	FR_PROTO_TRACE("Complete option is %zu byte(s)", slen);
-	FR_PROTO_HEX_DUMP(NULL, out, slen);
+	FR_PROTO_HEX_DUMP(out, slen, NULL);
 
 	return slen;
 }

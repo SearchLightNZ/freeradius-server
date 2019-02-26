@@ -49,7 +49,7 @@ typedef struct value_box fr_value_box_t;
 extern "C" {
 #endif
 
-extern const FR_NAME_NUMBER fr_value_box_type_names[];
+extern const FR_NAME_NUMBER fr_value_box_type_table[];
 
 extern size_t const fr_value_box_field_sizes[];
 
@@ -394,8 +394,8 @@ static inline int fr_value_unbox_ethernet_addr(uint8_t dst[6], fr_value_box_t *s
 {
 	if (unlikely(src->type != FR_TYPE_ETHERNET)) { \
 		fr_strerror_printf("Unboxing failed.  Needed type %s, had type %s",
-				   fr_int2str(fr_value_box_type_names, FR_TYPE_ETHERNET, "?Unknown?"),
-				   fr_int2str(fr_value_box_type_names, src->type, "?Unknown?"));
+				   fr_int2str(fr_value_box_type_table, FR_TYPE_ETHERNET, "?Unknown?"),
+				   fr_int2str(fr_value_box_type_table, src->type, "?Unknown?"));
 		return -1; \
 	}
 	memcpy(dst, src->vb_ether, sizeof(src->vb_ether));	/* Must be src, dst is a pointer */
@@ -406,8 +406,8 @@ static inline int fr_value_unbox_ethernet_addr(uint8_t dst[6], fr_value_box_t *s
 static inline int fr_value_unbox_##_field(_ctype *var, fr_value_box_t const *src) { \
 	if (unlikely(src->type != _type)) { \
 		fr_strerror_printf("Unboxing failed.  Needed type %s, had type %s", \
-				   fr_int2str(fr_value_box_type_names, _type, "?Unknown?"), \
-				   fr_int2str(fr_value_box_type_names, src->type, "?Unknown?")); \
+				   fr_int2str(fr_value_box_type_table, _type, "?Unknown?"), \
+				   fr_int2str(fr_value_box_type_table, src->type, "?Unknown?")); \
 		return -1; \
 	} \
 	*var = src->vb_##_field; \
@@ -501,19 +501,27 @@ void		fr_value_box_copy_shallow(TALLOC_CTX *ctx, fr_value_box_t *dst,
 
 int		fr_value_box_steal(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_value_box_t const *src);
 
+int		fr_value_box_vasprintf(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_dict_attr_t const *enumv, bool tainted,
+				       char const *fmt, va_list ap)
+		CC_HINT(format (printf, 5, 0));
+int		fr_value_box_asprintf(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_dict_attr_t const *enumv, bool tainted,
+				      char const *fmt, ...)
+		CC_HINT(format (printf, 5, 6));
+
 int		fr_value_box_strdup(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_dict_attr_t const *enumv,
 				    char const *src, bool tainted);
-int		fr_value_box_bstrndup(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_dict_attr_t const *enumv,
-				      char const *src, size_t len, bool tainted);
-int		fr_value_box_append_bstr(fr_value_box_t *dst,
-					 char const *src, size_t len, bool tainted);
-
 int		fr_value_box_strdup_buffer(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_dict_attr_t const *enumv,
 					   char const *src, bool tainted);
+
+int		fr_value_box_bstrndup(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_dict_attr_t const *enumv,
+				      char const *src, size_t len, bool tainted);
 int		fr_value_box_bstrsteal(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_dict_attr_t const *enumv,
 				       char *src, bool tainted);
 int		fr_value_box_bstrsnteal(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_dict_attr_t const *enumv,
 				        char **src, size_t inlen, bool tainted);
+
+int		fr_value_box_append_bstr(fr_value_box_t *dst, char const *src, size_t len, bool tainted);
+
 int		fr_value_box_strdup_shallow(fr_value_box_t *dst, fr_dict_attr_t const *enumv,
 					    char const *src, bool tainted);
 int		fr_value_box_strdup_buffer_shallow(TALLOC_CTX *ctx, fr_value_box_t *dst, fr_dict_attr_t const *enumv,

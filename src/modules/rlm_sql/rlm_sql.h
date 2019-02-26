@@ -27,11 +27,6 @@
  */
 RCSIDH(rlm_sql_h, "$Id$")
 
-#ifndef LOG_PREFIX
-#  define LOG_PREFIX "rlm_sql (%s) - "
-#  define LOG_PREFIX_ARGS inst->name
-#endif
-
 #include <freeradius-devel/server/base.h>
 #include <freeradius-devel/server/pool.h>
 #include <freeradius-devel/server/modpriv.h>
@@ -41,7 +36,9 @@ RCSIDH(rlm_sql_h, "$Id$")
 #define FR_ITEM_REPLY 1
 
 
-/* SQL Errors */
+/** Action to take at end of an SQL query
+ *
+ */
 typedef enum {
 	RLM_SQL_QUERY_INVALID = -3,	//!< Query syntax error.
 	RLM_SQL_ERROR = -2,		//!< General connection/server error.
@@ -57,13 +54,19 @@ typedef enum {
 	FALL_THROUGH_DEFAULT,
 } sql_fall_through_t;
 
-
 typedef char **rlm_sql_row_t;
 
 typedef struct {
-	fr_log_type_t	type;		//!< Type of log entry L_ERR, L_WARN, L_INFO, L_DBG etc..
-	char const	*msg;		//!< Log message.
+	fr_log_type_t		type;				//!< Type of log entry L_ERR, L_WARN, L_INFO,
+								///< L_DBG etc.
+	char const		*msg;				//!< Log message.
 } sql_log_entry_t;
+
+typedef struct {
+	char const		*sql_state;			//!< 2-5 char error code.
+	char const		*meaning;			//!< Verbose description.
+	sql_rcode_t 		rcode;				//!< What should happen if we receive this error.
+} sql_state_entry_t;
 
 /*
  * Sections where we dynamically resolve the config entry to use,
@@ -147,7 +150,9 @@ typedef struct {
 								//!< when log strings need to be copied.
 } rlm_sql_handle_t;
 
+extern const FR_NAME_NUMBER sql_rcode_description_table[];
 extern const FR_NAME_NUMBER sql_rcode_table[];
+
 /*
  *	Capabilities flags for drivers
  */
@@ -247,3 +252,11 @@ sql_rcode_t	rlm_sql_query(rlm_sql_t const *inst, REQUEST *request, rlm_sql_handl
 int		rlm_sql_fetch_row(rlm_sql_row_t *out, rlm_sql_t const *inst, REQUEST *request, rlm_sql_handle_t **handle);
 void		rlm_sql_print_error(rlm_sql_t const *inst, REQUEST *request, rlm_sql_handle_t *handle, bool force_debug);
 int		sql_set_user(rlm_sql_t const *inst, REQUEST *request, char const *username);
+
+/*
+ *	sql_state.c
+ */
+fr_trie_t	*sql_state_trie_alloc(TALLOC_CTX *ctx);
+int		sql_state_entries_from_table(fr_trie_t *states, sql_state_entry_t const table[]);
+int		sql_sate_entries_from_cs(fr_trie_t *states, CONF_SECTION *overrides);
+sql_state_entry_t const		*sql_state_entry_find(fr_trie_t const *states, char const *sql_state);

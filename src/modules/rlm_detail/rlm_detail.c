@@ -109,9 +109,9 @@ fr_dict_attr_autoload_t rlm_detail_dict_attr[] = {
 	{ .out = &attr_packet_src_ipv4_address, .name = "Packet-Src-IP-Address", .type = FR_TYPE_IPV4_ADDR, .dict = &dict_freeradius },
 	{ .out = &attr_packet_src_ipv6_address, .name = "Packet-Src-IPv6-Address", .type = FR_TYPE_IPV6_ADDR, .dict = &dict_freeradius },
 	{ .out = &attr_packet_src_port, .name = "Packet-Src-Port", .type = FR_TYPE_UINT16, .dict = &dict_freeradius },
-	{ .out = &attr_packet_type, .name = "Packet-Type", .type = FR_TYPE_UINT32, .dict = &dict_freeradius },
 	{ .out = &attr_protocol, .name = "Protocol", .type = FR_TYPE_UINT32, .dict = &dict_freeradius },
 
+	{ .out = &attr_packet_type, .name = "Packet-Type", .type = FR_TYPE_UINT32, .dict = &dict_radius },
 	{ .out = &attr_user_password, .name = "User-Password", .type = FR_TYPE_STRING, .dict = &dict_radius },
 
 	{ NULL }
@@ -186,7 +186,7 @@ static int mod_instantiate(void *instance, CONF_SECTION *conf)
 			attr = cf_pair_attr(cf_item_to_pair(ci));
 			if (!attr) continue; /* pair-anoia */
 
-			if (fr_dict_attr_by_qualified_name(&da, dict_radius, attr, false) < 0) {
+			if (fr_dict_attr_by_qualified_name(&da, dict_radius, attr, false) != FR_DICT_ATTR_OK) {
 				cf_log_perr(conf, "Failed resolving attribute");
 				return -1;
 			}

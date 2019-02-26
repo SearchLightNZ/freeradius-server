@@ -81,7 +81,6 @@ static unlang_action_t eap_tls_virtual_server_result(REQUEST *request, rlm_rcode
 	switch (*presult) {
 	case RLM_MODULE_OK:
 	case RLM_MODULE_UPDATED:
-		if (eap_tls_success(eap_session) < 0) *presult = RLM_MODULE_FAIL;
 		break;
 
 	default:
@@ -168,9 +167,50 @@ static rlm_rcode_t mod_process(void *instance, eap_session_t *eap_session)
 	 *	it accepts the certificates, too.
 	 */
 	case EAP_TLS_ESTABLISHED:
+	{
 		if (inst->virtual_server) return eap_tls_virtual_server(inst, eap_session);
-		if (eap_tls_success(eap_session) < 0) return RLM_MODULE_FAIL;
 
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+		/*
+		 *	Set the PRF label based on the TLS version negotiated
+		 *	in the handshake.
+		 */
+		switch (SSL_SESSION_get_protocol_version(SSL_get_session(tls_session->ssl))) {
+		case SSL2_VERSION:			/* Should never happen */
+		case SSL3_VERSION:			/* Should never happen */
+			rad_assert(0);
+			return RLM_MODULE_INVALID;
+
+		case TLS1_VERSION:
+		case TLS1_1_VERSION:
+		case TLS1_2_VERSION:
+#endif
+		{
+			static char const keying_prf_label[] = "client EAP encryption";
+
+			if (eap_tls_success(eap_session,
+				    	    keying_prf_label, sizeof(keying_prf_label) - 1,
+				    	    NULL, 0) < 0) return RLM_MODULE_FAIL;
+		}
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+			break;
+
+		case TLS1_3_VERSION:
+		default:
+		{
+			static char const keying_prf_label[] = "EXPORTER_EAP_TLS_Key_Material";
+			static char const sessid_prf_label[] = "EXPORTER_EAP_TLS_Method-Id";
+
+			if (eap_tls_success(eap_session,
+				    	    keying_prf_label, sizeof(keying_prf_label) - 1,
+				    	    sessid_prf_label, sizeof(sessid_prf_label) - 1) < 0) return RLM_MODULE_FAIL;
+		}
+			break;
+		}
+#endif
+
+
+	}
 		return RLM_MODULE_OK;
 
 	/*
@@ -191,12 +231,12 @@ static rlm_rcode_t mod_process(void *instance, eap_session_t *eap_session)
 
 		return RLM_MODULE_INVALID;
 
-		/*
-		 *	Anything else: fail.
-		 *
-		 *	Also, remove the session from the cache so that
-		 *	the client can't re-use it.
-		 */
+	/*
+	 *	Anything else: fail.
+	 *
+	 *	Also, remove the session from the cache so that
+	 *	the client can't re-use it.
+	 */
 	default:
 		tls_cache_deny(tls_session);
 
@@ -234,7 +274,6 @@ static rlm_rcode_t mod_session_init(void *uctx, eap_session_t *eap_session)
 	if (!eap_tls_session) return RLM_MODULE_FAIL;
 
 	eap_tls_session->include_length = inst->include_length;
-	eap_tls_session->tls_session->prf_label = "client EAP encryption";
 
 	/*
 	 *	TLS session initialization is over.  Now handle TLS

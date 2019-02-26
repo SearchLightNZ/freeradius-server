@@ -673,7 +673,7 @@ fi
 %attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/trigger.conf
 #%dir %attr(750,root,radiusd) %{_sysconfdir}/raddb/sql
 #%attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/sql/oracle/*
-%attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/users
+%config(noreplace) %{_sysconfdir}/raddb/users
 %dir %attr(770,root,radiusd) %{_sysconfdir}/raddb/certs
 %attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/certs/*
 %dir %attr(750,root,radiusd) %{_sysconfdir}/raddb/sites-available
@@ -686,11 +686,12 @@ fi
 %dir %attr(750,root,radiusd) %{_sysconfdir}/raddb/mods-available
 %attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/mods-available/*
 %dir %attr(750,root,radiusd) %{_sysconfdir}/raddb/mods-config
-%attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/mods-config/README.md
 %dir %attr(750,root,radiusd) %{_sysconfdir}/raddb/mods-config/attr_filter
 %attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/mods-config/attr_filter/*
 %dir %attr(750,root,radiusd) %{_sysconfdir}/raddb/mods-config/files
 %attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/mods-config/files/*
+%dir %attr(750,root,radiusd) %{_sysconfdir}/raddb/mods-config/isc_dhcp
+%attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/mods-config/isc_dhcp/*
 %dir %attr(750,root,radiusd) %{_sysconfdir}/raddb/mods-config/lua
 %attr(640,root,radiusd) %config(noreplace) %{_sysconfdir}/raddb/mods-config/lua/*
 %dir %attr(750,root,radiusd) %{_sysconfdir}/raddb/mods-config/perl

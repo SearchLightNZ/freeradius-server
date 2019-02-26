@@ -96,7 +96,6 @@ typedef struct {
 	uint8_t			*digest_buff;			//!< Pre-allocated digest buffer.
 } rlm_cipher_rsa_thread_inst_t;
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 /** Configuration for the OAEP padding method
  *
  */
@@ -106,7 +105,6 @@ typedef struct {
 
 	char const		*label;				//!< Additional input to the hashing function.
 } cipher_rsa_oaep_t;
-#endif
 
 /** Configuration for RSA encryption/decryption/signing
  *
@@ -125,9 +123,7 @@ typedef struct {
 
 	EVP_MD			*sig_digest;			//!< Signature digest type.
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 	cipher_rsa_oaep_t	*oaep;				//!< OAEP can use a configurable message digest type
-#endif								///< and additional keying labeleter.
 } cipher_rsa_t;
 
 /** Instance configuration
@@ -145,7 +141,6 @@ typedef struct {
 	};
 } rlm_cipher_t;
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 /** Configuration for the RSA-PCKS1-OAEP padding scheme
  *
  */
@@ -156,7 +151,6 @@ static const CONF_PARSER rsa_oaep_config[] = {
 
 	CONF_PARSER_TERMINATOR
 };
-#endif
 
 /** Configuration for the RSA cipher type
  *
@@ -172,10 +166,9 @@ static const CONF_PARSER rsa_config[] = {
 
 	{ FR_CONF_OFFSET("padding_type", FR_TYPE_VOID | FR_TYPE_NOT_EMPTY, cipher_rsa_t, padding), .func = cipher_rsa_padding_type_parse, .dflt = "pkcs" },
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 	{ FR_CONF_OFFSET("oaep", FR_TYPE_SUBSECTION, cipher_rsa_t, oaep),
 			 .subcs_size = sizeof(cipher_rsa_oaep_t), .subcs_type = "cipher_rsa_oaep_t", .subcs = (void const *) rsa_oaep_config },
-#endif
+
 	CONF_PARSER_TERMINATOR
 };
 
@@ -745,8 +738,8 @@ static xlat_action_t cipher_rsa_verify_xlat(TALLOC_CTX *ctx, fr_cursor_t *out,
 	if ((*in)->type != FR_TYPE_OCTETS) {
 		REDEBUG("Signature argument wrong type, expected %s, got %s.  "
 			"Use %%{base64_decode:<text>} or %%{hex_decode:<text>} if signature is armoured",
-			fr_int2str(fr_value_box_type_names, FR_TYPE_OCTETS, "?Unknown?"),
-			fr_int2str(fr_value_box_type_names, (*in)->type, "?Unknown?"));
+			fr_int2str(fr_value_box_type_table, FR_TYPE_OCTETS, "?Unknown?"),
+			fr_int2str(fr_value_box_type_table, (*in)->type, "?Unknown?"));
 		return XLAT_ACTION_FAIL;
 	}
 	sig = (*in)->vb_octets;
@@ -890,7 +883,6 @@ static int cipher_rsa_padding_params_set(EVP_PKEY_CTX *evp_pkey_ctx, cipher_rsa_
 	 *	Configure OAEP advanced padding options
 	 */
 	case RSA_PKCS1_OAEP_PADDING:
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 		if (unlikely(EVP_PKEY_CTX_set_rsa_oaep_md(evp_pkey_ctx, rsa_inst->oaep->oaep_digest) <= 0)) {
 			tls_strerror_printf(NULL);
 			PERROR("%s: Failed setting OAEP digest", __FUNCTION__);
@@ -922,7 +914,6 @@ static int cipher_rsa_padding_params_set(EVP_PKEY_CTX *evp_pkey_ctx, cipher_rsa_
 				return -1;
 			}
 		}
-#endif
 		return 0;
 
 	default:
@@ -1144,41 +1135,74 @@ static int mod_bootstrap(void *instance, CONF_SECTION *conf)
 		if (inst->rsa->private_key_file) {
 			char *decrypt_name;
 			char *verify_name;
+			xlat_t const *xlat;
 
+			/*
+			 *	Register decrypt xlat
+			 */
 			decrypt_name = talloc_asprintf(inst, "%s_decrypt", inst->xlat_name);
-			verify_name = talloc_asprintf(inst, "%s_verify", inst->xlat_name);
-
-			xlat_async_register(inst, decrypt_name, cipher_rsa_decrypt_xlat,
-					    cipher_xlat_instantiate, rlm_cipher_t *, NULL,
-					    cipher_xlat_thread_instantiate, rlm_cipher_rsa_thread_inst_t *,
-				    	    NULL, inst);
-
-			xlat_async_register(inst, verify_name, cipher_rsa_verify_xlat,
-					    cipher_xlat_instantiate, rlm_cipher_t *, NULL,
-					    cipher_xlat_thread_instantiate, rlm_cipher_rsa_thread_inst_t *,
-					    NULL, inst);
-
+			xlat = xlat_async_register(inst, decrypt_name, cipher_rsa_decrypt_xlat);
+			xlat_async_instantiate_set(xlat, cipher_xlat_instantiate,
+						   rlm_cipher_t *,
+						   NULL,
+						   inst);
+			xlat_async_thread_instantiate_set(xlat,
+							  cipher_xlat_thread_instantiate,
+							  rlm_cipher_rsa_thread_inst_t *,
+							  NULL,
+							  inst);
 			talloc_free(decrypt_name);
+
+			/*
+			 *	Verify sign xlat
+			 */
+			verify_name = talloc_asprintf(inst, "%s_verify", inst->xlat_name);
+			xlat = xlat_async_register(inst, verify_name, cipher_rsa_verify_xlat);
+			xlat_async_instantiate_set(xlat, cipher_xlat_instantiate,
+						   rlm_cipher_t *,
+						   NULL,
+						   inst);
+			xlat_async_thread_instantiate_set(xlat,
+							  cipher_xlat_thread_instantiate,
+							  rlm_cipher_rsa_thread_inst_t *,
+							  NULL,
+							  inst);
 			talloc_free(verify_name);
 		}
 
 		if (inst->rsa->certificate_file) {
 			char *encrypt_name;
 			char *sign_name;
+			xlat_t const *xlat;
 
+			/*
+			 *	Register encrypt xlat
+			 */
 			encrypt_name = talloc_asprintf(inst, "%s_encrypt", inst->xlat_name);
-			sign_name = talloc_asprintf(inst, "%s_sign", inst->xlat_name);
-
-			xlat_async_register(inst, encrypt_name, cipher_rsa_encrypt_xlat,
-				    	    cipher_xlat_instantiate, rlm_cipher_t *, NULL,
-				    	    cipher_xlat_thread_instantiate, rlm_cipher_rsa_thread_inst_t *,
-				    	    NULL, inst);
-			xlat_async_register(inst, sign_name, cipher_rsa_sign_xlat,
-				    	    cipher_xlat_instantiate, rlm_cipher_t *, NULL,
-				    	    cipher_xlat_thread_instantiate, rlm_cipher_rsa_thread_inst_t *,
-				    	    NULL, inst);
-
+			xlat = xlat_async_register(inst, encrypt_name, cipher_rsa_encrypt_xlat);
+			xlat_async_instantiate_set(xlat, cipher_xlat_instantiate,
+						   rlm_cipher_t *,
+						   NULL,
+						   inst);
+			xlat_async_thread_instantiate_set(xlat, cipher_xlat_thread_instantiate,
+							  rlm_cipher_rsa_thread_inst_t *,
+							  NULL,
+							  inst);
 			talloc_free(encrypt_name);
+
+			/*
+			 *	Register sign xlat
+			 */
+			sign_name = talloc_asprintf(inst, "%s_sign", inst->xlat_name);
+			xlat = xlat_async_register(inst, sign_name, cipher_rsa_sign_xlat);
+			xlat_async_instantiate_set(xlat, cipher_xlat_instantiate,
+						   rlm_cipher_t *,
+						   NULL,
+						   inst);
+			xlat_async_thread_instantiate_set(xlat, cipher_xlat_thread_instantiate,
+							  rlm_cipher_rsa_thread_inst_t *,
+							  NULL,
+							  inst);
 			talloc_free(sign_name);
 		}
 		break;

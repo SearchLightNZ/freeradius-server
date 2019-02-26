@@ -1,11 +1,43 @@
-# -*- text -*-
+#  -*- text -*-
+#
+#  :toc:
 #
 #  $Id$
 
+#######################################################################
 #
-#  This file defines a number of instances of the "attr_filter" module.
+#  = Attr_filter Module
+#
+#  The `attr_filter` module defines a number of instances of the "attr_filter".
 #
 
+#
+#  ## Syntax
+#
+#attr_filter attr_filter.<section> {
+	#
+	#  key::
+	#
+	#  The `key` to use for filter the packets.
+	#
+#	key = "<value>"
+
+	#
+	#  filename::
+	#
+	#  The `filename` with the attributes to filter.
+	#
+#	filename = </path/><section>
+#}
+
+#
+#  ## Default instance
+#
+#  The following default instances.
+#
+
+#
+#  ### pre-proxy
 #
 #  Filters the attributes in the packets we send to
 #  the RADIUS home servers.
@@ -18,11 +50,13 @@ attr_filter attr_filter.pre-proxy {
 }
 
 #
+#  ### post-proxy
+#
 #  Filters the attributes received in replies from proxied
 #  servers, to make sure we send back to our RADIUS client
 #  only allowed attributes.
 #
-#  Add this after calling rlm_radius for proxying.
+#  Add this after calling `rlm_radius` for proxying.
 #
 attr_filter attr_filter.post-proxy {
 	key = "%{Realm}"
@@ -30,8 +64,10 @@ attr_filter attr_filter.post-proxy {
 }
 
 #
-#  Enforce RFC requirements on the contents of Access-Reject
-#  packets. This should be called from "send Access-Reject".
+#  ### access_reject
+#
+#  Enforce RFC requirements on the contents of `Access-Reject`
+#  packets. This should be called from `send Access-Reject`.
 #
 attr_filter attr_filter.access_reject {
 	key = "%{User-Name}"
@@ -39,8 +75,10 @@ attr_filter attr_filter.access_reject {
 }
 
 #
-#  Enforce RFC requirements on the contents of Access-Challenge
-#  packets. This is called from "send Access-Challenge".
+#  ### access_challenge
+#
+#  Enforce RFC requirements on the contents of `Access-Challenge`
+#  packets. This is called from `send Access-Challenge`.
 #
 attr_filter attr_filter.access_challenge {
 	key = "%{User-Name}"
@@ -48,9 +86,11 @@ attr_filter attr_filter.access_challenge {
 }
 
 #
+#  ### accounting_response
+#
 #  Enforce RFC requirements on the contents of the
-#  Accounting-Response packets. Called from the
-#  "send Accounting-Response" section.
+#  `Accounting-Response` packets. Called from the
+#  `send Accounting-Response` section.
 #
 attr_filter attr_filter.accounting_response {
 	key = "%{User-Name}"

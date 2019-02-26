@@ -479,7 +479,8 @@ static int mod_instantiate(void *instance, CONF_SECTION *conf)
 		return -1;
 	}
 
-	if (fr_dict_attr_by_qualified_name(&da, dict_freeradius, inst->pwd_fmt->field[key_field], true) < 0) {
+	if (fr_dict_attr_by_qualified_name(&da, dict_freeradius,
+					   inst->pwd_fmt->field[key_field], true) != FR_DICT_ATTR_OK) {
 		PERROR("Unable to resolve attribute");
 		release_ht(inst->ht);
 		inst->ht = NULL;
@@ -523,10 +524,10 @@ static void result_add(TALLOC_CTX *ctx, rlm_passwd_t const *inst, REQUEST *reque
 				vp = fr_pair_make(ctx, request->dict,
 						  vps, inst->pwd_fmt->field[i], pw->field[i], T_OP_EQ);
 				if (vp) {
-					RDEBUG("Added %s: '%s' to %s ", inst->pwd_fmt->field[i], pw->field[i], listname);
+					RDEBUG2("Added %s: '%s' to %s ", inst->pwd_fmt->field[i], pw->field[i], listname);
 				}
 			} else
-				RDEBUG("NOOP %s: '%s' to %s ", inst->pwd_fmt->field[i], pw->field[i], listname);
+				RDEBUG2("NOOP %s: '%s' to %s ", inst->pwd_fmt->field[i], pw->field[i], listname);
 		}
 	}
 }

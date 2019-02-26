@@ -35,7 +35,7 @@ USES_APPLE_DEPRECATED_API	/* OpenSSL API has been deprecated by Apple */
 #include <freeradius-devel/server/base.h>
 #include <freeradius-devel/server/rad_assert.h>
 #include "base.h"
-#include "tls_attrs.h"
+#include "attrs.h"
 
 static int instance_count = 0;
 
@@ -176,20 +176,6 @@ static libssl_defect_t libssl_defects[] =
 		.name		= "OCSP status request extension",
 		.comment	= "For more information see https://www.openssl.org/news/secadv/20160922.txt"
 	},
-	{
-		.low		= VM(1,0,1),			/* 1.0.1  */
-		.high		= Vm(1,0,1,'t'),		/* 1.0.1t */
-		.id		= "CVE-2016-6304",
-		.name		= "OCSP status request extension",
-		.comment	= "For more information see https://www.openssl.org/news/secadv/20160922.txt"
-	},
-	{
-		.low		= VM(1,0,1),			/* 1.0.1  */
-		.high		= Vm(1,0,1,'f'),		/* 1.0.1f */
-		.id		= "CVE-2014-0160",
-		.name		= "Heartbleed",
-		.comment	= "For more information see http://heartbleed.com"
-	},
 };
 #endif /* ENABLE_OPENSSL_VERSION_CHECK */
 
@@ -225,17 +211,11 @@ static unsigned long _thread_id(void)
  *	Use preprocessor magic to get the right function and argument
  *	to use.  This avoids ifdef's through the rest of the code.
  */
-#if OPENSSL_VERSION_NUMBER < 0x10000000L
-#define ssl_id_function  _thread_id
-#define set_id_callback CRYPTO_set_id_callback
-
-#else
 static void ssl_id_function(CRYPTO_THREADID *id)
 {
 	CRYPTO_THREADID_set_numeric(id, _thread_id());
 }
 #define set_id_callback CRYPTO_THREADID_set_callback
-#endif
 
 
 static void _global_mutex(int mode, int n, UNUSED char const *file, UNUSED int line)
@@ -499,8 +479,13 @@ int tls_init(void)
 		return 0;
 	}
 
+	/*
+	 *	This will only fail if memory has already been allocated
+	 *	by OpenSSL.
+	 */
 	if (CRYPTO_set_mem_functions(openssl_talloc, openssl_realloc, openssl_free) != 1) {
-		WARN("Failed to set OpenSSL memory allocation functions.  OpenSSL mallocs will not be tracked");
+		tls_log_error(NULL, "Failed to set OpenSSL memory allocation functions.  tls_init() called too late");
+		return -1;
 	}
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -542,6 +527,16 @@ int tls_init(void)
 	if (rand_engine && (strcmp(ENGINE_get_id(rand_engine), "rdrand") == 0)) ENGINE_unregister_RAND(rand_engine);
 	ENGINE_register_all_complete();
 
+	instance_count++;
+
+	return 0;
+}
+
+/** Load dictionary attributes
+ *
+ */
+int tls_dict_init(void)
+{
 	if (fr_dict_autoload(tls_dict) < 0) {
 		PERROR("Failed initialising protocol library");
 		tls_free();
@@ -553,8 +548,6 @@ int tls_init(void)
 		tls_free();
 		return -1;
 	}
-
-	instance_count++;
 
 	return 0;
 }

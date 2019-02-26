@@ -86,6 +86,8 @@ fr_dict_autoload_t rlm_eap_fast_dict[] = {
 	{ NULL }
 };
 
+fr_dict_attr_t const *attr_eap_emsk;
+fr_dict_attr_t const *attr_eap_msk;
 fr_dict_attr_t const *attr_eap_tls_require_client_cert;
 fr_dict_attr_t const *attr_eap_type;
 fr_dict_attr_t const *attr_ms_chap_challenge;
@@ -93,8 +95,6 @@ fr_dict_attr_t const *attr_ms_chap_peer_challenge;
 fr_dict_attr_t const *attr_proxy_to_realm;
 
 fr_dict_attr_t const *attr_eap_message;
-fr_dict_attr_t const *attr_eap_msk;
-fr_dict_attr_t const *attr_eap_emsk;
 fr_dict_attr_t const *attr_freeradius_proxied_to;
 fr_dict_attr_t const *attr_ms_mppe_send_key;
 fr_dict_attr_t const *attr_ms_mppe_recv_key;
@@ -131,6 +131,8 @@ fr_dict_attr_t const *attr_eap_fast_vendor_specific;
 
 extern fr_dict_attr_autoload_t rlm_eap_fast_dict_attr[];
 fr_dict_attr_autoload_t rlm_eap_fast_dict_attr[] = {
+	{ .out = &attr_eap_emsk, .name = "EAP-EMSK", .type = FR_TYPE_OCTETS, .dict = &dict_freeradius },
+	{ .out = &attr_eap_msk, .name = "EAP-MSK", .type = FR_TYPE_OCTETS, .dict = &dict_freeradius },
 	{ .out = &attr_eap_tls_require_client_cert, .name = "EAP-TLS-Require-Client-Cert", .type = FR_TYPE_UINT32, .dict = &dict_freeradius },
 	{ .out = &attr_eap_type, .name = "EAP-Type", .type = FR_TYPE_UINT32, .dict = &dict_freeradius },
 	{ .out = &attr_ms_chap_challenge, .name = "MS-CHAP-Challenge", .type = FR_TYPE_OCTETS, .dict = &dict_freeradius },
@@ -138,8 +140,6 @@ fr_dict_attr_autoload_t rlm_eap_fast_dict_attr[] = {
 	{ .out = &attr_proxy_to_realm, .name = "Proxy-To-Realm", .type = FR_TYPE_STRING, .dict = &dict_freeradius },
 
 	{ .out = &attr_eap_message, .name = "EAP-Message", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
-	{ .out = &attr_eap_msk, .name = "EAP-MSK", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
-	{ .out = &attr_eap_emsk, .name = "EAP-EMSK", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
 	{ .out = &attr_freeradius_proxied_to, .name = "FreeRADIUS-Proxied-To", .type = FR_TYPE_IPV4_ADDR, .dict = &dict_radius },
 	{ .out = &attr_ms_mppe_send_key, .name = "MS-MPPE-Send-Key", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
 	{ .out = &attr_ms_mppe_recv_key, .name = "MS-MPPE-Recv-Key", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
@@ -295,7 +295,7 @@ static int _session_secret(SSL *s, void *secret, int *secret_len,
 
 	if (!t->pac.key) return 0;
 
-	RDEBUG("processing PAC-Opaque");
+	RDEBUG2("processing PAC-Opaque");
 
 	eap_fast_session_ticket(tls_session, s, secret, secret_len);
 
@@ -330,14 +330,14 @@ static int _session_ticket(SSL *s, uint8_t const *data, int len, void *arg)
 
 	t = talloc_get_type_abort(tls_session->opaque, eap_fast_tunnel_t);
 
-	RDEBUG("PAC provided via ClientHello SessionTicket extension");
+	RDEBUG2("PAC provided via ClientHello SessionTicket extension");
 	RHEXDUMP(L_DBG_LVL_MAX, data, len, "PAC-Opaque");
 
 	if ((ntohs(opaque->hdr.type) & EAP_FAST_TLV_TYPE) != attr_eap_fast_pac_opaque_tlv->attr) {
 		errmsg = "PAC is not of type Opaque";
 error:
 		RERROR("%s, sending alert to client", errmsg);
-		if (tls_session_handshake_alert(request, tls_session, SSL3_AL_FATAL, SSL_AD_BAD_CERTIFICATE)) {
+		if (tls_session_alert(request, tls_session, SSL3_AL_FATAL, SSL_AD_BAD_CERTIFICATE)) {
 			RERROR("too many alerts");
 			return 0;
 		}
@@ -542,7 +542,7 @@ static rlm_rcode_t mod_process(void *instance, eap_session_t *eap_session)
 		 *	Success: Automatically return MPPE keys.
 		 */
 	case FR_CODE_ACCESS_ACCEPT:
-		if (eap_tls_success(eap_session) < 0) return RLM_MODULE_FAIL;
+		if (eap_tls_success(eap_session, NULL, 0, NULL, 0) < 0) return RLM_MODULE_FAIL;
 		return RLM_MODULE_OK;
 
 		/*
@@ -602,7 +602,7 @@ static rlm_rcode_t mod_session_init(void *type_arg, eap_session_t *eap_session)
 	tls_session = eap_tls_session->tls_session;
 
 	if (inst->cipher_list) {
-		RDEBUG("Over-riding main cipher list with '%s'", inst->cipher_list);
+		RDEBUG2("Over-riding main cipher list with '%s'", inst->cipher_list);
 
 		if (!SSL_set_cipher_list(tls_session->ssl, inst->cipher_list)) {
 			REDEBUG("Failed over-riding cipher list to '%s'.  EAP-FAST will likely not work",

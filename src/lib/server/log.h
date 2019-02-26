@@ -251,8 +251,8 @@ void	log_global_free(void);
  * **Debug levels**
  * Level    | Debug arguments         | Macro(s) enabled      | When to use
  * -------- | ----------------------- | --------------------- | -----------
- * 1        | ``-x``                  | R*DEBUG               | Never - Deprecated
- * 2        | ``-xx`` or ``-X``       | R*DEBUG, R*DEBUG2     | Normal request flow. Operations, Results of queries, or execs, etc...
+ * 1        | ``-x``                  | R*DEBUG               | Packet processing, entering/exiting virtual servers, results of module calls
+ * 2        | ``-xx`` or ``-X``       | R*DEBUG, R*DEBUG2     | Unlang keyword evaluation. Module debug output, results of queries, or execs, etc...
  * 3        | ``-xxx`` or ``-Xx``     | R*DEBUG, R*DEBUG[2-3] | Internal server state or packet input. State machine changes, extra attribute info, etc...
  * 4        | ``-xxxx`` or ``-Xxx``   | R*DEBUG, R*DEBUG[2-4] | Verbose internal server state messages or packet input. Hex dumps, structure dumps, pointer values.
  * 5        | ``-xxxxx`` or ``-Xxxx`` | R*DEBUG, R*DEBUG[2-5] | Low level internal server state messages.
@@ -458,18 +458,24 @@ do {\
 } while (0)
 
 #define RHEXDUMP(_lvl, _data, _len, _fmt, ...) \
-	if (rad_debug_lvl >= _lvl) do { \
+	if (log_debug_enabled(L_DBG,_lvl, request)) do { \
 		log_request(L_DBG, _lvl, request, _fmt, ## __VA_ARGS__); \
 		log_request_hex(L_DBG, _lvl, request, _data, _len); \
 	} while (0)
 
 #define RHEXDUMP_INLINE(_lvl, _data, _len, _fmt, ...) \
-	if (rad_debug_lvl >= _lvl) do { \
+	if (log_debug_enabled(L_DBG,_lvl, request)) do { \
 		char *_tmp; \
 		_tmp = talloc_array(NULL, char, ((_len) * 2) + 1); \
 		fr_bin2hex(_tmp, _data, _len); \
 		log_request(L_DBG, _lvl, request, _fmt " 0x%s", ## __VA_ARGS__, _tmp); \
 		talloc_free(_tmp); \
 	} while(0)
+
+#define HEXDUMP(_lvl, _data, _len, _fmt, ...) \
+	if (debug_enabled(L_DBG, _lvl)) do { \
+		_FR_LOG(L_DBG, _fmt, ## __VA_ARGS__); \
+		log_hex(&default_log, L_DBG, _lvl, _data, _len); \
+	} while (0)
 
 

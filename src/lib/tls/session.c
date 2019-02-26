@@ -38,8 +38,9 @@
 #include <openssl/x509v3.h>
 #include <ctype.h>
 
+#include "attrs.h"
 #include "base.h"
-#include "tls_attrs.h"
+#include "missing.h"
 
 /*
  *	For creating certificate attributes.
@@ -63,6 +64,136 @@ static fr_dict_attr_t const **cert_attr_names[][2] = {
 #define IDX_SUBJECT_ALT_NAME_DNS	(5)
 #define IDX_SUBJECT_ALT_NAME_EMAIL	(6)
 #define IDX_SUBJECT_ALT_NAME_UPN	(7)
+
+static char const *tls_version_str[] = {
+	[SSL2_VERSION]				= "SSL 2.0",
+	[SSL3_VERSION]				= "SSL 3.0",
+	[TLS1_VERSION]				= "TLS 1.0",
+#ifdef TLS1_1_VERSION
+	[TLS1_1_VERSION]			= "TLS 1.1",
+#endif
+#ifdef TLS1_2_VERSION
+	[TLS1_2_VERSION]			= "TLS 1.2",
+#endif
+#ifdef TLS1_3_VERSION
+	[TLS1_3_VERSION]			= "TLS 1.3",
+#endif
+#ifdef TLS1_4_VERSION
+	[TLS1_4_VERSION]			= "TLS 1.4",
+#endif
+};
+
+static char const *tls_content_type_str[] = {
+	[SSL3_RT_CHANGE_CIPHER_SPEC]		= "change_cipher_spec",
+	[SSL3_RT_ALERT]				= "alert",
+	[SSL3_RT_HANDSHAKE]			= "handshake",
+	[SSL3_RT_APPLICATION_DATA]		= "application_data",
+#ifdef SSL3_RT_HEADER
+	[SSL3_RT_HEADER]			= "header",
+#endif
+#ifdef SSL3_RT_INNER_CONTENT_TYPE
+	[SSL3_RT_INNER_CONTENT_TYPE]		= "inner_content_type",
+#endif
+};
+
+static char const *tls_alert_description_str[] = {
+	[SSL3_AD_CLOSE_NOTIFY]			= "close_notify",
+	[SSL3_AD_UNEXPECTED_MESSAGE]		= "unexpected_message",
+	[SSL3_AD_BAD_RECORD_MAC]		= "bad_record_mac",
+	[TLS1_AD_DECRYPTION_FAILED]		= "decryption_failed",
+	[TLS1_AD_RECORD_OVERFLOW]		= "record_overflow",
+	[SSL3_AD_DECOMPRESSION_FAILURE]		= "decompression_failure",
+	[SSL3_AD_HANDSHAKE_FAILURE]		= "handshake_failure",
+	[SSL3_AD_BAD_CERTIFICATE]		= "bad_certificate",
+	[SSL3_AD_UNSUPPORTED_CERTIFICATE]	= "unsupported_certificate",
+	[SSL3_AD_CERTIFICATE_REVOKED]		= "certificate_revoked",
+	[SSL3_AD_CERTIFICATE_EXPIRED]		= "certificate_expired",
+	[SSL3_AD_CERTIFICATE_UNKNOWN]		= "certificate_unknown",
+	[SSL3_AD_ILLEGAL_PARAMETER]		= "illegal_parameter",
+	[TLS1_AD_UNKNOWN_CA]			= "unknown_ca",
+	[TLS1_AD_ACCESS_DENIED]			= "access_denied",
+	[TLS1_AD_DECODE_ERROR]			= "decode_error",
+	[TLS1_AD_DECRYPT_ERROR]			= "decrypt_error",
+	[TLS1_AD_EXPORT_RESTRICTION]		= "export_restriction",
+	[TLS1_AD_PROTOCOL_VERSION]		= "protocol_version",
+	[TLS1_AD_INSUFFICIENT_SECURITY]		= "insufficient_security",
+	[TLS1_AD_INTERNAL_ERROR]		= "internal_error",
+	[TLS1_AD_USER_CANCELLED]		= "user_cancelled",
+	[TLS1_AD_NO_RENEGOTIATION]		= "no_renegotiation",
+#ifdef TLS13_AD_MISSING_EXTENSION
+	[TLS13_AD_MISSING_EXTENSION]		= "missing_extension",
+#endif
+#ifdef TLS13_AD_CERTIFICATE_REQUIRED
+	[TLS13_AD_CERTIFICATE_REQUIRED]		= "certificate_required",
+#endif
+#ifdef TLS1_AD_UNSUPPORTED_EXTENSION
+	[TLS1_AD_UNSUPPORTED_EXTENSION]		= "unsupported_extension",
+#endif
+#ifdef TLS1_AD_CERTIFICATE_UNOBTAINABLE
+	[TLS1_AD_CERTIFICATE_UNOBTAINABLE]	= "certificate_unobtainable",
+#endif
+#ifdef  TLS1_AD_UNRECOGNIZED_NAME
+	[TLS1_AD_UNRECOGNIZED_NAME]		= "unrecognised_name",
+#endif
+#ifdef TLS1_AD_BAD_CERTIFICATE_STATUS_RESPONSE
+	[TLS1_AD_BAD_CERTIFICATE_STATUS_RESPONSE] = "bad_certificate_status_response",
+#endif
+#ifdef TLS1_AD_BAD_CERTIFICATE_HASH_VALUE
+	[TLS1_AD_BAD_CERTIFICATE_HASH_VALUE]	= "bad_certificate_hash_value",
+#endif
+#ifdef TLS1_AD_UNKNOWN_PSK_IDENTITY
+	[TLS1_AD_UNKNOWN_PSK_IDENTITY]		= "unknown_psk_identity",
+#endif
+#ifdef TLS1_AD_NO_APPLICATION_PROTOCOL
+	[TLS1_AD_NO_APPLICATION_PROTOCOL]	= "no_application_protocol",
+#endif
+};
+
+static char const *tls_handshake_type_str[] = {
+	[SSL3_MT_HELLO_REQUEST]			= "hello_request",
+	[SSL3_MT_CLIENT_HELLO]			= "client_hello",
+	[SSL3_MT_SERVER_HELLO]			= "server_hello",
+#ifdef SSL3_MT_NEWSESSION_TICKET
+	[SSL3_MT_NEWSESSION_TICKET]		= "new_session_ticket",
+#endif
+#ifdef SSL3_MT_END_OF_EARLY_DATA
+	[SSL3_MT_END_OF_EARLY_DATA]		= "end_of_early_data",
+#endif
+#ifdef SSL3_MT_ENCRYPTED_EXTENSIONS
+	[SSL3_MT_ENCRYPTED_EXTENSIONS]		= "encrypted_extensions",
+#endif
+	[SSL3_MT_CERTIFICATE]			= "certificate",
+	[SSL3_MT_SERVER_KEY_EXCHANGE]		= "server_key_exchange",
+	[SSL3_MT_CERTIFICATE_REQUEST]		= "certificate_request",
+	[SSL3_MT_SERVER_DONE]			= "server_hello_done",
+	[SSL3_MT_CERTIFICATE_VERIFY]		= "certificate_verify",
+	[SSL3_MT_CLIENT_KEY_EXCHANGE]		= "client_key_exchange",
+	[SSL3_MT_FINISHED]			= "finished",
+#ifdef SSL3_MT_CERTIFICATE_URL
+	[SSL3_MT_CERTIFICATE_URL]		= "certificate_url",
+#endif
+#ifdef SSL3_MT_CERTIFICATE_STATUS
+	[SSL3_MT_CERTIFICATE_STATUS]		= "certificate_status",
+#endif
+#ifdef SSL3_MT_SUPPLEMENTAL_DATA
+	[SSL3_MT_SUPPLEMENTAL_DATA]		= "supplemental_data",
+#endif
+#ifdef SSL3_MT_KEY_UPDATE
+	[SSL3_MT_KEY_UPDATE]			= "key_update",
+#endif
+#ifdef SSL3_MT_NEXT_PROTO
+	[SSL3_MT_NEXT_PROTO]			= "next_proto",
+#endif
+#ifdef SSL3_MT_MESSAGE_HASH
+	[SSL3_MT_MESSAGE_HASH]			= "message_hash",
+#endif
+#ifdef DTLS1_MT_HELLO_VERIFY_REQUEST
+	[DTLS1_MT_HELLO_VERIFY_REQUEST]		= "hello_verify_request",
+#endif
+#ifdef SSL3_MT_CHANGE_CIPHER_SPEC
+	[SSL3_MT_CHANGE_CIPHER_SPEC]		= "change_cipher_spec",
+#endif
+};
 
 /** Clear a record buffer
  *
@@ -125,6 +256,52 @@ inline static unsigned int record_to_buff(tls_record_t *record, void *out, unsig
 	if (record->used > 0) memmove(record->data, record->data + taken, record->used);
 
 	return taken;
+}
+
+/** Place a request pointer in the SSL * for retrieval by callbacks
+ *
+ * @note A request must not already be bound to the SSL*.
+ *
+ * @param[in] request	to bind to the SSL *.
+ * @param[in] ssl	session to be bound.
+ */
+inline static CC_HINT(nonnull) void tls_session_request_bind(REQUEST *request, SSL *ssl)
+{
+	int ret;
+
+#ifndef NDEBUG
+	REQUEST *old;
+	old = SSL_get_ex_data(ssl, FR_TLS_EX_INDEX_REQUEST);
+	if (old) {
+		(void)talloc_get_type_abort(ssl, REQUEST);
+		rad_assert(0);
+	}
+#endif
+	ret = SSL_set_ex_data(ssl, FR_TLS_EX_INDEX_REQUEST, request);
+	if (unlikely(ret == 0)) {
+		rad_assert(0);
+		return;
+	}
+}
+
+/** Remove a request pointer in the SSL * for retrieval by callbacks
+ *
+ * @note A request must be bound to the SSL*.
+ *
+ * @param[in] ssl	containing the request pointer.
+ */
+inline static CC_HINT(nonnull) void tls_session_request_unbind(SSL *ssl)
+{
+	int ret;
+
+#ifndef NDEBUG
+	(void)talloc_get_type_abort(SSL_get_ex_data(ssl, FR_TLS_EX_INDEX_REQUEST), REQUEST);
+#endif
+	ret = SSL_set_ex_data(ssl, FR_TLS_EX_INDEX_REQUEST, NULL);
+	if (unlikely(ret == 0)) {
+		rad_assert(0);
+		return;
+	}
 }
 
 /** Return the static private key password we have configured
@@ -309,7 +486,7 @@ unsigned int tls_session_psk_server_cb(SSL *ssl, const char *identity,
  *
  * @param[in] ssl	session.
  * @param[in] where	Which context the callback is being called in.
- *			See https://www.openssl.org/docs/manmaster/ssl/SSL_CTX_set_info_callback.html
+ *			See https://www.openssl.org/docs/manmaster/man3/SSL_CTX_set_info_callback.html
  *			for additional info.
  * @param[in] ret	0 if an error occurred, or the alert type if an alert was received.
  */
@@ -333,6 +510,9 @@ void tls_session_info_cb(SSL const *ssl, int where, int ret)
 		if (RDEBUG_ENABLED3) {
 			char const *abbrv = SSL_state_string(ssl);
 			size_t len;
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+			STACK_OF(SSL_CIPHER) *client_ciphers;
+#endif
 
 			/*
 			 *	Trim crappy OpenSSL state strings...
@@ -341,6 +521,26 @@ void tls_session_info_cb(SSL const *ssl, int where, int ret)
 			if ((len > 1) && (abbrv[len - 1] == ' ')) len--;
 
 			RDEBUG3("Handshake state [%.*s] - %s%s", (int)len, abbrv, role, state);
+
+			/*
+			 *	After a ClientHello, list all the proposed ciphers from the client
+			 */
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+			if (SSL_get_state(ssl) == TLS_ST_SR_CLNT_HELLO &&
+			    (client_ciphers = SSL_get_client_ciphers(ssl))) {
+				int i;
+				int num_ciphers = sk_SSL_CIPHER_num(client_ciphers);
+				const SSL_CIPHER *this_cipher;
+
+				RDEBUG3("Client's preferred ciphers (by priority)");
+				RINDENT();
+				for (i = 0; i < num_ciphers; i++) {
+					this_cipher = sk_SSL_CIPHER_value(client_ciphers, i);
+					RDEBUG3("[%i] %s", i, SSL_CIPHER_get_name(this_cipher));
+				}
+				REXDENT();
+			}
+#endif
 		} else {
 			RDEBUG2("Handshake state - %s%s", role, state);
 		}
@@ -399,12 +599,16 @@ void tls_session_info_cb(SSL const *ssl, int where, int ret)
  * @param[in] request	The current #REQUEST.
  * @param[in] tls_session	The current TLS session.
  */
-static void session_msg_log(REQUEST *request, tls_session_t *tls_session)
+static void session_msg_log(REQUEST *request, tls_session_t *tls_session, uint8_t const *data, size_t data_len)
 {
-	char const	*str_write_p, *str_version, *str_content_type = "";
-	char const	*str_details1 = "", *str_details2= "";
-	char		buffer[32];
-	char		content_type[64];
+	char const	*version, *content_type;
+	char const	*str_details1 = NULL;
+	char const	*str_details2 = NULL;
+	char		unknown_version[32];
+	char		unknown_content_type[32];
+	char		unknown_alert_level[32];
+	char		unknown_alert_description[32];
+	char		unknown_handshake_type[32];
 
 	/*
 	 *	Don't print this out in the normal course of
@@ -412,309 +616,97 @@ static void session_msg_log(REQUEST *request, tls_session_t *tls_session)
 	 */
 	if (!RDEBUG_ENABLED2) return;
 
-	str_write_p = tls_session->info.origin ? ">>> send" : "<<< recv";
-
-	switch (tls_session->info.version) {
-	case SSL2_VERSION:
-		str_version = "SSL 2.0 ";
-		break;
-
-	case SSL3_VERSION:
-		str_version = "SSL 3.0 ";
-		break;
-
-	case TLS1_VERSION:
-		str_version = "TLS 1.0 ";
-		break;
-
-#ifdef TLS1_1_VERSION
-	case TLS1_1_VERSION:
-		str_version = "TLS 1.1 ";
-		break;
-#endif
-#ifdef TLS1_2_VERSION
-	case TLS1_2_VERSION:
-		str_version = "TLS 1.2 ";
-		break;
-#endif
-#ifdef TLS1_3_VERSION
-	case TLS1_3_VERSION:
-		str_version = "TLS 1.3 ";
-		break;
-#endif
-
-	default:
-		if (tls_session->info.version) {
-			sprintf(buffer, "UNKNOWN TLS VERSION 0x%04x", tls_session->info.version);
-			str_version = buffer;
-		} else {
-			str_version = "";
-		}
-		break;
+	if (((size_t)tls_session->info.version >= NUM_ELEMENTS(tls_version_str)) ||
+	    !tls_version_str[tls_session->info.version]) {
+		sprintf(unknown_version, "unknown_tls_version_0x%04x", tls_session->info.version);
+		version = unknown_version;
+	} else {
+		version = tls_version_str[tls_session->info.version];
 	}
 
 	/*
 	 *	TLS 1.0, 1.1, 1.2 content types are the same as SSLv3
 	 */
-	switch (tls_session->info.content_type) {
-	case SSL3_RT_CHANGE_CIPHER_SPEC:
-		str_content_type = "change_cipher_spec ";
-		break;
-
-	case SSL3_RT_ALERT:
-		str_content_type = "alert ";
-		break;
-
-	case SSL3_RT_HANDSHAKE:
-		str_content_type = "handshake ";
-		break;
-
-	case SSL3_RT_APPLICATION_DATA:
-		str_content_type = "application_data ";
-		break;
-
-#ifdef TLS1_RT_HEARTBEAT
-	case TLS1_RT_HEARTBEAT:
-		str_content_type = "heartbeat ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO
-	case TLS1_RT_CRYPTO:
-		str_content_type = "crypto ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_PREMASTER
-	case TLS1_RT_CRYPTO_PREMASTER:
-		str_content_type = "crypto_premaster ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_CLIENT_RANDOM
-	case TLS1_RT_CRYPTO_CLIENT_RANDOM:
-		str_content_type = "client_random ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_SERVER_RANDOM
-	case TLS1_RT_CRYPTO_SERVER_RANDOM:
-		str_content_type = "server_random ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_MASTER
-	case TLS1_RT_CRYPTO_MASTER:
-		str_content_type = "crypto_master ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_READ
-	case TLS1_RT_CRYPTO_READ:
-		str_content_type = "crypto_read ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_WRITE
-	case TLS1_RT_CRYPTO_WRITE:
-		str_content_type = "crypto_write ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_MAC
-	case TLS1_RT_CRYPTO_MAC:
-		str_content_type = "crypto_mac ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_KEY
-	case TLS1_RT_CRYPTO_KEY:
-		str_content_type = "crypto_key ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_IV
-	case TLS1_RT_CRYPTO_IV:
-		str_content_type = "crypto_iv ";
-		break;
-#endif
-
-#ifdef TLS1_RT_CRYPTO_FIXED_IV
-	case TLS1_RT_CRYPTO_FIXED_IV:
-		str_content_type = "crypto_fixed_iv ";
-		break;
-#endif
-
-	default:
-		snprintf(content_type, sizeof(content_type), "unknown content type %i", tls_session->info.content_type );
-		str_content_type = content_type;
-		break;
+	if (((size_t)tls_session->info.content_type >= NUM_ELEMENTS(tls_content_type_str)) ||
+	    !tls_content_type_str[tls_session->info.content_type]) {
+		sprintf(unknown_content_type, "unknown_content_type_0x%04x", tls_session->info.content_type);
+		content_type = unknown_content_type;
+	} else {
+		content_type = tls_content_type_str[tls_session->info.content_type];
 	}
 
 	if (tls_session->info.content_type == SSL3_RT_ALERT) {
-		str_details1 = ", ???";
-
 		if (tls_session->info.record_len == 2) {
 			switch (tls_session->info.alert_level) {
 			case SSL3_AL_WARNING:
-				str_details1 = ", warning";
+				str_details1 = "warning";
 				break;
 			case SSL3_AL_FATAL:
-				str_details1 = ", fatal";
+				str_details1 = "fatal";
+				break;
+
+			default:
+				sprintf(unknown_alert_level,
+					"unknown_alert_level_0x%04x", tls_session->info.alert_level);
+				str_details1 = unknown_alert_level;
 				break;
 			}
 
-			str_details2 = " ???";
-			switch (tls_session->info.alert_description) {
-			case SSL3_AD_CLOSE_NOTIFY:
-				str_details2 = " close_notify";
-				break;
+			if (((size_t)tls_session->info.alert_description >= NUM_ELEMENTS(tls_alert_description_str)) ||
+			    !tls_alert_description_str[tls_session->info.alert_description]) {
+				sprintf(unknown_alert_description,
+					"unknown_alert_0x%04x", tls_session->info.alert_description);
+				str_details2 = unknown_alert_description;
+			} else {
+				str_details2 = tls_alert_description_str[tls_session->info.alert_description];
+			}
+		} else {
+			str_details1 = "unknown_alert_level";
+			str_details2 = "unknown_alert";
+		}
+	}
 
-			case SSL3_AD_UNEXPECTED_MESSAGE:
-				str_details2 = " unexpected_message";
-				break;
-
-			case SSL3_AD_BAD_RECORD_MAC:
-				str_details2 = " bad_record_mac";
-				break;
-
-			case TLS1_AD_DECRYPTION_FAILED:
-				str_details2 = " decryption_failed";
-				break;
-
-			case TLS1_AD_RECORD_OVERFLOW:
-				str_details2 = " record_overflow";
-				break;
-
-			case SSL3_AD_DECOMPRESSION_FAILURE:
-				str_details2 = " decompression_failure";
-				break;
-
-			case SSL3_AD_HANDSHAKE_FAILURE:
-				str_details2 = " handshake_failure";
-				break;
-
-			case SSL3_AD_BAD_CERTIFICATE:
-				str_details2 = " bad_certificate";
-				break;
-
-			case SSL3_AD_UNSUPPORTED_CERTIFICATE:
-				str_details2 = " unsupported_certificate";
-				break;
-
-			case SSL3_AD_CERTIFICATE_REVOKED:
-				str_details2 = " certificate_revoked";
-				break;
-
-			case SSL3_AD_CERTIFICATE_EXPIRED:
-				str_details2 = " certificate_expired";
-				break;
-
-			case SSL3_AD_CERTIFICATE_UNKNOWN:
-				str_details2 = " certificate_unknown";
-				break;
-
-			case SSL3_AD_ILLEGAL_PARAMETER:
-				str_details2 = " illegal_parameter";
-				break;
-
-			case TLS1_AD_UNKNOWN_CA:
-				str_details2 = " unknown_ca";
-				break;
-
-			case TLS1_AD_ACCESS_DENIED:
-				str_details2 = " access_denied";
-				break;
-
-			case TLS1_AD_DECODE_ERROR:
-				str_details2 = " decode_error";
-				break;
-
-			case TLS1_AD_DECRYPT_ERROR:
-				str_details2 = " decrypt_error";
-				break;
-
-			case TLS1_AD_EXPORT_RESTRICTION:
-				str_details2 = " export_restriction";
-				break;
-
-			case TLS1_AD_PROTOCOL_VERSION:
-				str_details2 = " protocol_version";
-				break;
-
-			case TLS1_AD_INSUFFICIENT_SECURITY:
-				str_details2 = " insufficient_security";
-				break;
-
-			case TLS1_AD_INTERNAL_ERROR:
-				str_details2 = " internal_error";
-				break;
-
-			case TLS1_AD_USER_CANCELLED:
-				str_details2 = " user_canceled";
-				break;
-
-			case TLS1_AD_NO_RENEGOTIATION:
-				str_details2 = " no_renegotiation";
-				break;
+	if ((size_t)tls_session->info.content_type == SSL3_RT_HANDSHAKE) {
+		if (tls_session->info.record_len > 0) {
+			if ((tls_session->info.handshake_type >= (uint8_t)NUM_ELEMENTS(tls_handshake_type_str)) ||
+			    !tls_handshake_type_str[tls_session->info.handshake_type]) {
+				sprintf(unknown_handshake_type,
+					"unknown_handshake_type_0x%04x", tls_session->info.handshake_type);
+				str_details1 = unknown_handshake_type;
+			} else {
+				str_details1 = tls_handshake_type_str[tls_session->info.handshake_type];
 			}
 		}
 	}
 
-	if (tls_session->info.content_type == SSL3_RT_HANDSHAKE) {
-		str_details1 = "???";
-
-		if (tls_session->info.record_len > 0) switch (tls_session->info.handshake_type) {
-		case SSL3_MT_HELLO_REQUEST:
-			str_details1 = ", hello_request";
-			break;
-
-		case SSL3_MT_CLIENT_HELLO:
-			str_details1 = ", client_hello";
-			break;
-
-		case SSL3_MT_SERVER_HELLO:
-			str_details1 = ", server_hello";
-			break;
-
-		case SSL3_MT_CERTIFICATE:
-			str_details1 = ", certificate";
-			break;
-
-		case SSL3_MT_SERVER_KEY_EXCHANGE:
-			str_details1 = ", server_key_exchange";
-			break;
-
-		case SSL3_MT_CERTIFICATE_REQUEST:
-			str_details1 = ", certificate_request";
-			break;
-
-		case SSL3_MT_SERVER_DONE:
-			str_details1 = ", server_hello_done";
-			break;
-
-		case SSL3_MT_CERTIFICATE_VERIFY:
-			str_details1 = ", certificate_verify";
-			break;
-
-		case SSL3_MT_CLIENT_KEY_EXCHANGE:
-			str_details1 = ", client_key_exchange";
-			break;
-
-		case SSL3_MT_FINISHED:
-			str_details1 = ", finished";
-			break;
-		}
-	}
-
-	snprintf(tls_session->info.info_description,
-		 sizeof(tls_session->info.info_description),
-		 "%s %s%s[length %lu]%s%s\n",
-		 str_write_p, str_version, str_content_type,
+	snprintf(tls_session->info.info_description, sizeof(tls_session->info.info_description),
+		 "%s %s, %s[length %lu]%s%s%s%s",
+		 tls_session->info.origin ? ">>> send" : "<<< recv",
+		 version,
+		 content_type,
 		 (unsigned long)tls_session->info.record_len,
-		 str_details1, str_details2);
+		 str_details1 ? ", " : "",
+		 str_details1 ? str_details1 : "",
+		 str_details2 ? ", " : "",
+		 str_details2 ? str_details2 : "");
 
-	ROPTIONAL(RDEBUG2, DEBUG2, "%s", tls_session->info.info_description);
+	/*
+	 *	Print out information about the record and print the
+	 *	data at higher debug levels.
+	 */
+	if (request) {
+		if (RDEBUG_ENABLED3) {
+			RHEXDUMP(L_DBG_LVL_3, data, data_len, "%s", tls_session->info.info_description);
+		} else {
+			RDEBUG2("%s", tls_session->info.info_description);
+		}
+	} else {
+		if (DEBUG_ENABLED3) {
+			HEXDUMP(L_DBG_LVL_3, data, data_len, "%s", tls_session->info.info_description);
+		} else {
+			DEBUG2("%s", tls_session->info.info_description);
+		}
+	}
 }
 
 /** Record the progression of the TLS handshake
@@ -770,7 +762,7 @@ void tls_session_msg_cb(int write_p, int msg_version, int content_type,
 	 */
 #ifdef SSL2_VERSION
 	if (!fr_cond_assert(msg_version != SSL2_VERSION)) {
-		ERROR("Invalid version (SSLv2) in handshake");
+		ROPTIONAL(REDEBUG, ERROR, "Invalid version (SSLv2) in handshake");
 		session->invalid = true;
 		return;
 	}
@@ -778,14 +770,14 @@ void tls_session_msg_cb(int write_p, int msg_version, int content_type,
 
 #ifdef SSL3_VERSION
 	if (!fr_cond_assert(msg_version != SSL3_VERSION)) {
-		ERROR("Invalid version (SSLv3) in handshake");
+		ROPTIONAL(REDEBUG, ERROR, "Invalid version (SSLv3) in handshake");
 		session->invalid = true;
 		return;
 	}
 #endif
 
 	/*
-	 *	OpenSSL 1.0.2 calls this function with 'pseudo'
+	 *	OpenSSL >= 1.0.2 calls this function with 'pseudo'
 	 *	content types.  Which breaks our tracking of
 	 *	the SSL Session state.
 	 */
@@ -833,7 +825,7 @@ void tls_session_msg_cb(int write_p, int msg_version, int content_type,
 			payload_len = (p[1] << 8) | p[2];
 			if ((payload_len + 3) > len) {
 				session->invalid = true;
-				ERROR("OpenSSL Heartbeat attack detected.  Closing connection");
+				ROPTIONAL(REDEBUG, ERROR, "OpenSSL Heartbeat attack detected.  Closing connection");
 				return;
 			}
 		}
@@ -843,7 +835,7 @@ void tls_session_msg_cb(int write_p, int msg_version, int content_type,
 		break;
 	}
 
-	session_msg_log(request, session);
+	session_msg_log(request, session, (uint8_t const *)inbuf, len);
 }
 
 static inline VALUE_PAIR *tls_session_cert_attr_add(TALLOC_CTX *ctx, REQUEST *request, fr_cursor_t *cursor,
@@ -1133,9 +1125,13 @@ int tls_session_recv(REQUEST *request, tls_session_t *session)
 {
 	int ret;
 
+	tls_session_request_bind(request, session->ssl);
+
 	if (!SSL_is_init_finished(session->ssl)) {
 		REDEBUG("Attempted to read application data before handshake completed");
-		return -1;
+	error:
+		ret = -1;
+		goto finish;
 	}
 
 	/*
@@ -1146,7 +1142,7 @@ int tls_session_recv(REQUEST *request, tls_session_t *session)
 		if (ret != (int) session->dirty_in.used) {
 			record_init(&session->dirty_in);
 			REDEBUG("Failed writing %zd bytes to SSL BIO: %d", session->dirty_in.used, ret);
-			return -1;
+			goto error;
 		}
 
 		record_init(&session->dirty_in);
@@ -1172,31 +1168,39 @@ int tls_session_recv(REQUEST *request, tls_session_t *session)
 		case SSL_ERROR_WANT_READ:
 			RWDEBUG("Peer indicated record was complete, but OpenSSL returned SSL_WANT_READ. "
 				"Attempting to continue");
-			return 1;
+			ret = 1;
+			goto finish;
 
 		case SSL_ERROR_WANT_WRITE:
 			REDEBUG("Error in fragmentation logic: SSL_WANT_WRITE");
+			goto error;
+
+		case SSL_ERROR_NONE:
+			RDEBUG2("No application data received.  Assuming handshake is continuing...");
+			ret = 0;
 			break;
 
 		default:
 			REDEBUG("Error in fragmentation logic");
 			tls_log_io_error(request, session, ret, "Failed in SSL_read");
-			break;
+			goto error;
 		}
-		return -1;
-	}
 
-	if (ret == 0) RWDEBUG("No data inside of the tunnel");
+	}
 
 	/*
 	 *	Passed all checks, successfully decrypted data
 	 */
 	session->clean_out.used = ret;
+	ret = 0;
 
 	RDEBUG2("Decrypted TLS application data (%zu bytes)", session->clean_out.used);
 	log_request_hex(L_DBG, L_DBG_LVL_3, request, session->clean_out.data, session->clean_out.used);
 
-	return 0;
+finish:
+	tls_session_request_unbind(session->ssl);
+
+	return ret;
 }
 
 /** Encrypt application data
@@ -1209,14 +1213,19 @@ int tls_session_recv(REQUEST *request, tls_session_t *session)
  * @param request The current request.
  * @param session The current TLS session.
  * @return
- *	- 0 on failure.
- *	- 1 on success.
+ *	- -1 on failure.
+ *	- 0 on success.
  */
 int tls_session_send(REQUEST *request, tls_session_t *session)
 {
+	int ret = 0;
+
+	tls_session_request_bind(request, session->ssl);
+
 	if (!SSL_is_init_finished(session->ssl)) {
 		REDEBUG("Attempted to write application data before handshake completed");
-		return 0;
+		ret = -1;
+		goto finish;
 	}
 
 	/*
@@ -1229,8 +1238,6 @@ int tls_session_send(REQUEST *request, tls_session_t *session)
 	 *	contain the data to send to the client.
 	 */
 	if (session->clean_in.used > 0) {
-		int ret;
-
 		RDEBUG2("TLS application data to encrypt (%zu bytes)", session->clean_in.used);
 		log_request_hex(L_DBG, L_DBG_LVL_3, request, session->clean_in.data, session->clean_in.used);
 
@@ -1242,26 +1249,63 @@ int tls_session_send(REQUEST *request, tls_session_t *session)
 			       sizeof(session->dirty_out.data));
 		if (ret > 0) {
 			session->dirty_out.used = ret;
+			ret = 0;
 		} else {
-			if (!tls_log_io_error(request, session, ret, "Failed in SSL_write")) return 0;
+			if (tls_log_io_error(request, session, ret, "Failed in SSL_write") < 0) ret = -1;
 		}
 	}
 
-	return 1;
+finish:
+	tls_session_request_unbind(session->ssl);
+
+	return ret;
 }
 
-int tls_session_handshake_alert(UNUSED REQUEST *request, tls_session_t *session, uint8_t level, uint8_t description)
+/** Instruct tls_session_handshake to create a synthesised TLS alert record and send it to the peer
+ *
+ */
+int tls_session_alert(UNUSED REQUEST *request, tls_session_t *session, uint8_t level, uint8_t description)
 {
-	rad_assert(session->handshake_alert.level == 0);
+	if (session->alerts_sent > 3) return -1;		/* Some kind of sate machine brokenness */
 
-	session->handshake_alert.count++;
-	if (session->handshake_alert.count > 3)
-		return -1;
+	/*
+	 *	Ignore less severe alerts
+	 */
+	if (session->pending_alert && (level < session->pending_alert_level)) return 0;
 
-	session->handshake_alert.level = level;
-	session->handshake_alert.description = description;
+	session->pending_alert = true;
+	session->pending_alert_level = level;
+	session->pending_alert_description = description;
 
 	return 0;
+}
+
+static void tls_session_alert_send(REQUEST *request, tls_session_t *session)
+{
+	/*
+	 *	Update our internal view of the session
+	 */
+	session->info.origin = TLS_INFO_ORIGIN_RECORD_SENT;
+	session->info.content_type = SSL3_RT_ALERT;
+	session->info.alert_level = session->pending_alert_level;
+	session->info.alert_description = session->pending_alert_description;
+
+	session->dirty_out.data[0] = session->info.content_type;
+	session->dirty_out.data[1] = 3;
+	session->dirty_out.data[2] = 1;
+	session->dirty_out.data[3] = 0;
+	session->dirty_out.data[4] = 2;
+	session->dirty_out.data[5] = session->pending_alert_level;
+	session->dirty_out.data[6] = session->pending_alert_description;
+
+	session->dirty_out.used = 7;
+
+	session->pending_alert = false;
+	session->alerts_sent++;
+
+	SSL_clear(session->ssl);	/* Reset the SSL *, to allow the client to restart the session */
+
+	session_msg_log(request, session, session->dirty_out.data, session->dirty_out.used);
 }
 
 /** Continue a TLS handshake
@@ -1272,12 +1316,14 @@ int tls_session_handshake_alert(UNUSED REQUEST *request, tls_session_t *session,
  * @param request The current request.
  * @param session The current TLS session.
  * @return
- *	- 0 on error.
- *	- 1 on success.
+ *	- -1 on error.
+ *	- 0 on success.
  */
 int tls_session_handshake(REQUEST *request, tls_session_t *session)
 {
 	int ret;
+
+	tls_session_request_bind(request, session->ssl);
 
 	/*
 	 *	This is a logic error.  tls_session_handshake
@@ -1287,12 +1333,14 @@ int tls_session_handshake(REQUEST *request, tls_session_t *session)
 	 */
 	if (SSL_is_init_finished(session->ssl)) {
 		REDEBUG("Attempted to continue TLS handshake, but handshake has completed");
-		return 0;
+	error:
+		ret = -1;
+		goto finish;
 	}
 
 	if (session->invalid) {
 		REDEBUG("Preventing invalid session from continuing");
-		return 0;
+		goto error;
 	}
 
 	/*
@@ -1305,7 +1353,7 @@ int tls_session_handshake(REQUEST *request, tls_session_t *session)
 		if (ret != (int)session->dirty_in.used) {
 			REDEBUG("Failed writing %zd bytes to TLS BIO: %d", session->dirty_in.used, ret);
 			record_init(&session->dirty_in);
-			return 0;
+			goto error;
 		}
 		record_init(&session->dirty_in);
 	}
@@ -1334,9 +1382,16 @@ int tls_session_handshake(REQUEST *request, tls_session_t *session)
 		       sizeof(session->clean_out.data) - session->clean_out.used);
 	if (ret > 0) {
 		session->clean_out.used += ret;
-		return 1;
+	success:
+		ret = 1;
+		goto finish;
 	}
-	if (!tls_log_io_error(request, session, ret, "Failed in SSL_read")) return 0;
+
+	/*
+	 *	Returns 0 if we can continue processing the handshake
+	 *	Returns -1 if we encountered a fatal error.
+	 */
+	if (tls_log_io_error(request, session, ret, "Failed in SSL_read") < 0) goto error;
 
 	/*
 	 *	This only occurs once per session, where calling
@@ -1350,7 +1405,7 @@ int tls_session_handshake(REQUEST *request, tls_session_t *session)
 	if (SSL_is_init_finished(session->ssl)) {
 		SSL_CIPHER const *cipher;
 		VALUE_PAIR *vp;
-		char const *str_version;
+		char const *version;
 
 		char cipher_desc[256], cipher_desc_clean[256];
 		char *p = cipher_desc, *q = cipher_desc_clean;
@@ -1374,61 +1429,42 @@ int tls_session_handshake(REQUEST *request, tls_session_t *session)
 
 		RDEBUG2("Cipher suite: %s", cipher_desc_clean);
 
+		RDEBUG2("Adding TLS session information to request");
 		vp = fr_pair_afrom_num(request->state_ctx, 0, FR_TLS_SESSION_CIPHER_SUITE);
 		if (vp) {
 			fr_pair_value_strcpy(vp,  SSL_CIPHER_get_name(cipher));
 			fr_pair_add(&request->state, vp);
-			RDEBUG2("    &session-state:TLS-Session-Cipher-Suite := \"%s\"", vp->vp_strvalue);
+			RINDENT();
+			RDEBUG2("&session-state:TLS-Session-Cipher-Suite := \"%s\"", vp->vp_strvalue);
+			REXDENT();
 		}
 
-		switch (session->info.version) {
-		case SSL2_VERSION:
-			str_version = "SSL 2.0";
-			break;
-		case SSL3_VERSION:
-			str_version = "SSL 3.0";
-			break;
-		case TLS1_VERSION:
-			str_version = "TLS 1.0";
-			break;
-#ifdef TLS1_1_VERSION
-		case TLS1_1_VERSION:
-			str_version = "TLS 1.1";
-			break;
-#endif
-#ifdef TLS1_2_VERSION
-		case TLS1_2_VERSION:
-			str_version = "TLS 1.2";
-			break;
-#endif
-#ifdef TLS1_3_VERSION
-		case TLS1_3_VERSION:
-			str_version = "TLS 1.3";
-			break;
-#endif
-		default:
-			str_version = "UNKNOWN";
-			break;
+		if (((size_t)session->info.version >= NUM_ELEMENTS(tls_version_str)) ||
+		    !tls_version_str[session->info.version]) {
+			version = "UNKNOWN";
+		} else {
+			version = tls_version_str[session->info.version];
 		}
 
 		vp = fr_pair_afrom_num(request->state_ctx, 0, FR_TLS_SESSION_VERSION);
 		if (vp) {
-			fr_pair_value_strcpy(vp, str_version);
+			fr_pair_value_strcpy(vp, version);
 			fr_pair_add(&request->state, vp);
-			RDEBUG2("    &session-state:TLS-Session-Version := \"%s\"", str_version);
+			RINDENT();
+			RDEBUG2("&session-state:TLS-Session-Version := \"%s\"", version);
+			REXDENT();
 		}
 
-#if OPENSSL_VERSION_NUMBER >= 0x10001000L
 		/*
 		 *	Cache the SSL_SESSION pointer.
 		 *
 		 *	Which contains all the data we need for session resumption.
 		 */
-		if (!session->ssl_session) {
-			session->ssl_session = SSL_get_session(session->ssl);
-			if (!session->ssl_session) {
+		if (!session->session) {
+			session->session = SSL_get_session(session->ssl);
+			if (!session->session) {
 				REDEBUG("Failed getting TLS session");
-				return 0;
+				goto error;
 			}
 		}
 
@@ -1437,14 +1473,13 @@ int tls_session_handshake(REQUEST *request, tls_session_t *session)
 
 			MEM(ssl_log = BIO_new(BIO_s_mem()));
 
-			if (SSL_SESSION_print(ssl_log, session->ssl_session) == 1) {
+			if (SSL_SESSION_print(ssl_log, session->session) == 1) {
 				SSL_DRAIN_ERROR_QUEUE(RDEBUG3, "", ssl_log);
 			} else {
 				RDEBUG3("Failed retrieving session data");
 			}
 			BIO_free(ssl_log);
 		}
-#endif
 
 		/*
 		 *	Session was resumed, add attribute to mark it as such.
@@ -1470,12 +1505,12 @@ int tls_session_handshake(REQUEST *request, tls_session_t *session)
 		} else if (BIO_should_retry(session->from_ssl)) {
 			record_init(&session->dirty_in);
 			RDEBUG2("Asking for more data in tunnel");
-			return 1;
+			goto success;
 
 		} else {
 			tls_log_error(NULL, NULL);
 			record_init(&session->dirty_in);
-			return 0;
+			goto error;
 		}
 	} else {
 		/* Its clean application data, do whatever we want */
@@ -1483,33 +1518,22 @@ int tls_session_handshake(REQUEST *request, tls_session_t *session)
 	}
 
 	/*
-	 *	W would prefer to latch on info.content_type but
-	 *	(I think its...) tls_session_msg_cb() updates it
-	 *	after the call to tls_session_handshake_alert()
+	 *	Trash the current data in dirty_out, and synthesize
+	 *	a TLS error record.
+	 *
+	 *	OpensSL annoyingly provides no mechanism for us to
+	 *	send alerts, and we need to send alerts as part of
+	 *	RFC 5216, so this is our only option.
 	 */
-	if (session->handshake_alert.level) {
-		/*
-		 * FIXME RFC 4851 section 3.6.1 - peer might ACK alert and include a restarted ClientHello
-		 *                                 which eap_tls_session_status() will fail on
-		 */
-		session->info.content_type = SSL3_RT_ALERT;
-
-		session->dirty_out.data[0] = session->info.content_type;
-		session->dirty_out.data[1] = 3;
-		session->dirty_out.data[2] = 1;
-		session->dirty_out.data[3] = 0;
-		session->dirty_out.data[4] = 2;
-		session->dirty_out.data[5] = session->handshake_alert.level;
-		session->dirty_out.data[6] = session->handshake_alert.description;
-
-		session->dirty_out.used = 7;
-
-		session->handshake_alert.level = 0;
-	}
+	if (session->pending_alert) tls_session_alert_send(request, session);
 
 	/* We are done with dirty_in, reinitialize it */
 	record_init(&session->dirty_in);
-	return 1;
+
+finish:
+	tls_session_request_unbind(session->ssl);
+
+	return ret;
 }
 
 /** Free a TLS session and any associated OpenSSL data
@@ -1577,7 +1601,8 @@ tls_session_t *tls_session_init_client(TALLOC_CTX *ctx, fr_tls_conf_t *conf)
 	}
 
 	request = request_alloc(session);
-	SSL_set_ex_data(session->ssl, FR_TLS_EX_INDEX_REQUEST, (void *)request);
+
+	tls_session_request_bind(request, session->ssl);
 
 	/*
 	 *	Add the message callback to identify what type of
@@ -1601,12 +1626,15 @@ tls_session_t *tls_session_init_client(TALLOC_CTX *ctx, fr_tls_conf_t *conf)
 	ret = SSL_connect(session->ssl);
 	if (ret <= 0) {
 		tls_log_io_error(NULL, session, ret, "Failed in SSL_connect");
+		tls_session_request_unbind(session->ssl);
 		talloc_free(session);
 
 		return NULL;
 	}
 
 	session->mtu = conf->fragment_size;
+
+	tls_session_request_unbind(session->ssl);
 
 	return session;
 }
@@ -1650,14 +1678,14 @@ tls_session_t *tls_session_init_server(TALLOC_CTX *ctx, fr_tls_conf_t *conf, REQ
 	if (session == NULL) {
 		RERROR("Error allocating memory for TLS session");
 		SSL_free(new_tls);
-
 		return NULL;
 	}
 	session_init(session);
 	session->ctx = ssl_ctx;
 	session->ssl = new_tls;
-
 	talloc_set_destructor(session, _tls_session_free);
+
+	tls_session_request_bind(request, session->ssl);
 
 	/*
 	 *	Initialize callbacks
@@ -1713,7 +1741,10 @@ tls_session_t *tls_session_init_server(TALLOC_CTX *ctx, fr_tls_conf_t *conf, REQ
 
 		if (tmpl_aexpand(session, &context_id, request, conf->session_id_name, NULL, NULL) < 0) {
 			RPEDEBUG("Failed expanding session ID");
+		error:
+			tls_session_request_unbind(session->ssl);
 			talloc_free(session);
+			return NULL;
 		}
 
 		MEM(md_ctx = EVP_MD_CTX_create());
@@ -1723,10 +1754,8 @@ tls_session_t *tls_session_init_server(TALLOC_CTX *ctx, fr_tls_conf_t *conf, REQ
 		EVP_MD_CTX_destroy(md_ctx);
 		talloc_free(context_id);
 
-		if (!fr_cond_assert(SSL_set_session_id_context(session->ssl, digest, sizeof(digest)) == 1)) {
-			talloc_free(session);
-			return NULL;
-		}
+		if (!fr_cond_assert(SSL_set_session_id_context(session->ssl,
+							       digest, sizeof(digest)) == 1)) goto error;
 	}
 
 	/*
@@ -1739,22 +1768,19 @@ tls_session_t *tls_session_init_server(TALLOC_CTX *ctx, fr_tls_conf_t *conf, REQ
 		if (SSL_use_certificate_file(session->ssl, vp->vp_strvalue, SSL_FILETYPE_PEM) != 1) {
 			tls_log_error(request, "Failed loading TLS session certificate \"%s\"",
 				      vp->vp_strvalue);
-			talloc_free(session);
-			return NULL;
+			goto error;
 		}
 
 		if (SSL_use_PrivateKey_file(session->ssl, vp->vp_strvalue, SSL_FILETYPE_PEM) != 1) {
 			tls_log_error(request, "Failed loading TLS session certificate \"%s\"",
 				      vp->vp_strvalue);
-			talloc_free(session);
-			return NULL;
+			goto error;
 		}
 
 		if (SSL_check_private_key(session->ssl) != 1) {
 			tls_log_error(request, "Failed validating TLS session certificate \"%s\"",
 				      vp->vp_strvalue);
-			talloc_free(session);
-			return NULL;
+			goto error;
 		}
 	/*
 	 *	Better to perform explicit checks, than rely
@@ -1763,14 +1789,12 @@ tls_session_t *tls_session_init_server(TALLOC_CTX *ctx, fr_tls_conf_t *conf, REQ
 	} else {
 		if (!conf->chains || !conf->chains[0]->private_key_file) {
 			ERROR("TLS Server requires a private key file");
-			talloc_free(session);
-			return NULL;
+			goto error;
 		}
 
 		if (!conf->chains || !conf->chains[0]->certificate_file) {
 			ERROR("TLS Server requires a certificate file");
-			talloc_free(session);
-			return NULL;
+			goto error;
 		}
 	}
 
@@ -1816,6 +1840,8 @@ tls_session_t *tls_session_init_server(TALLOC_CTX *ctx, fr_tls_conf_t *conf, REQ
 	}
 
 	if (conf->session_cache_server) session->allow_session_resumption = true; /* otherwise it's false */
+
+	tls_session_request_unbind(session->ssl);
 
 	return session;
 }

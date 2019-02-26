@@ -44,7 +44,7 @@ typedef enum {
 	XLAT_FUNC_ASYNC						//!< Ingests and excretes value boxes (and may yield)
 } xlat_func_sync_type_t;
 
-typedef struct {
+typedef struct xlat_s {
 	char const		*name;				//!< Name of xlat function.
 
 	union {
@@ -64,12 +64,13 @@ typedef struct {
 
 	char const		*inst_type;			//!< C name of instance structure.
 	size_t			inst_size;			//!< Size of instance data to pre-allocate.
+	void			*uctx;				//!< uctx to pass to instantiation functions.
 
 	char const		*thread_inst_type;		//!< C name of thread instance structure.
 	size_t			thread_inst_size;		//!< Size of the thread instance data to pre-allocate.
+	void			*thread_uctx;			//!< uctx to pass to instantiation functions.
 
 	bool			async_safe;			//!< If true, is async safe
-	void			*uctx;				//!< uctx to pass to instantiation functions.
 
 	size_t			buf_len;			//!< Length of output buffer to pre-allocate.
 	void			*mod_inst;			//!< Module instance passed to xlat
@@ -161,6 +162,10 @@ xlat_action_t	xlat_frame_eval(TALLOC_CTX *ctx, fr_cursor_t *out, xlat_exp_t cons
 				REQUEST *request, xlat_exp_t const **in);
 
 int		xlat_eval_walk(xlat_exp_t *exp, xlat_walker_t walker, xlat_state_t type, void *uctx);
+
+int		xlat_eval_init(void);
+
+void		xlat_eval_free(void);
 
 void		unlang_xlat_init(void);
 

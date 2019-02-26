@@ -34,8 +34,8 @@ RCSID("$Id$")
 #include <freeradius-devel/util/thread_local.h>
 
 #ifdef HAVE_OPENSSL_EVP_H
-#  include <freeradius-devel/tls/base.h>
 #  include <openssl/hmac.h>
+#  include <freeradius-devel/tls/missing.h>
 
 fr_thread_local_setup(HMAC_CTX *, md5_hmac_ctx)
 

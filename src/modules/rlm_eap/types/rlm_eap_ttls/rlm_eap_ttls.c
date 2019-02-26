@@ -139,6 +139,7 @@ static rlm_rcode_t mod_process(void *arg, eap_session_t *eap_session)
 	tls_session_t		*tls_session = eap_tls_session->tls_session;
 	ttls_tunnel_t		*tunnel = NULL;
 	REQUEST			*request = eap_session->request;
+	static char 		keying_prf_label[] = "ttls keying material";
 
 	if (tls_session->opaque) tunnel = talloc_get_type_abort(tls_session->opaque, ttls_tunnel_t);
 
@@ -164,16 +165,19 @@ static rlm_rcode_t mod_process(void *arg, eap_session_t *eap_session)
 	 */
 	case EAP_TLS_ESTABLISHED:
 		if (SSL_session_reused(tls_session->ssl)) {
-			RDEBUG("Skipping Phase2 due to session resumption");
+			RDEBUG2("Skipping Phase2 due to session resumption");
 			goto do_keys;
 		}
 
 		if (tunnel && tunnel->authenticated) {
+
 		do_keys:
 			/*
 			 *	Success: Automatically return MPPE keys.
 			 */
-			if (eap_tls_success(eap_session) < 0) return RLM_MODULE_FAIL;
+			if (eap_tls_success(eap_session,
+					    keying_prf_label, sizeof(keying_prf_label) - 1,
+					    NULL, 0) < 0) return RLM_MODULE_FAIL;
 			return RLM_MODULE_OK;
 		} else {
 			eap_tls_request(eap_session);
@@ -234,8 +238,7 @@ static rlm_rcode_t mod_process(void *arg, eap_session_t *eap_session)
 		 *	Success: Automatically return MPPE keys.
 		 */
 	case FR_CODE_ACCESS_ACCEPT:
-		if (eap_tls_success(eap_session) < 0) return 0;
-		return RLM_MODULE_OK;
+		goto do_keys;
 
 	/*
 	 *	No response packet, MUST be proxying it.
@@ -285,11 +288,6 @@ static rlm_rcode_t mod_session_init(void *type_arg, eap_session_t *eap_session)
 
 	eap_session->opaque = eap_tls_session = eap_tls_session_init(eap_session, inst->tls_conf, client_cert);
 	if (!eap_tls_session) return RLM_MODULE_FAIL;
-
-	/*
-	 *	Set up type-specific information.
-	 */
-	eap_tls_session->tls_session->prf_label = "ttls keying material";
 
 	/*
 	 *	TLS session initialization is over.  Now handle TLS

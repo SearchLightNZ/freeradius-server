@@ -39,8 +39,8 @@ unsigned int sha1_data_problems = 0;
 #endif
 
 #ifdef HAVE_OPENSSL_EVP_H
-#  include <freeradius-devel/tls/base.h>
 #  include <openssl/hmac.h>
+#  include <freeradius-devel/tls/missing.h>
 
 fr_thread_local_setup(HMAC_CTX *, sha1_hmac_ctx)
 

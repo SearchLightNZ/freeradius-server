@@ -72,6 +72,9 @@ static CONF_PARSER module_config[] = {
 	{ FR_CONF_POINTER("Start", FR_TYPE_SUBSECTION, NULL), .subcs = section_config },
 	{ FR_CONF_POINTER("Interim-Update", FR_TYPE_SUBSECTION, NULL), .subcs = section_config },
 	{ FR_CONF_POINTER("Stop", FR_TYPE_SUBSECTION, NULL), .subcs = section_config },
+	{ FR_CONF_POINTER("Accounting-On", FR_TYPE_SUBSECTION, NULL), .subcs = section_config },
+	{ FR_CONF_POINTER("Accounting-Off", FR_TYPE_SUBSECTION, NULL), .subcs = section_config },
+	{ FR_CONF_POINTER("Failed", FR_TYPE_SUBSECTION, NULL), .subcs = section_config },
 
 	CONF_PARSER_TERMINATOR
 };
@@ -204,19 +207,19 @@ static rlm_rcode_t CC_HINT(nonnull) mod_accounting(void *instance, UNUSED void *
 
 	vp = fr_pair_find_by_da(request->packet->vps, attr_acct_status_type, TAG_ANY);
 	if (!vp) {
-		RDEBUG("Could not find account status type in packet");
+		RDEBUG2("Could not find account status type in packet");
 		return RLM_MODULE_NOOP;
 	}
 
 	dv = fr_dict_enum_by_value(vp->da, &vp->data);
 	if (!dv) {
-		RDEBUG("Unknown Acct-Status-Type %u", vp->vp_uint32);
+		RDEBUG2("Unknown Acct-Status-Type %u", vp->vp_uint32);
 		return RLM_MODULE_NOOP;
 	}
 
 	cs = cf_section_find(inst->cs, dv->alias, NULL);
 	if (!cs) {
-		RDEBUG("No subsection %s", dv->alias);
+		RDEBUG2("No subsection %s", dv->alias);
 		return RLM_MODULE_NOOP;
 	}
 

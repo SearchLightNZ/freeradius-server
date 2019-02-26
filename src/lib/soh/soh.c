@@ -124,7 +124,6 @@ fr_dict_attr_autoload_t soh_dict_attr[] = {
 
 static int instance_count = 0;
 
-
 /** Read big-endian 2-byte unsigned from p
  *
  * caller must ensure enough data exists at "p"
@@ -200,7 +199,7 @@ static int eap_peap_soh_mstlv(REQUEST *request, uint8_t const *p, unsigned int d
 		 */
 		case 1:
 			if (data_len < 18) {
-				RDEBUG("insufficient data for MS-Machine-Inventory-Packet");
+				RDEBUG2("insufficient data for MS-Machine-Inventory-Packet");
 				return 0;
 			}
 			data_len -= 18;
@@ -340,7 +339,7 @@ static int eap_peap_soh_mstlv(REQUEST *request, uint8_t const *p, unsigned int d
 			break;
 
 		default:
-			RDEBUG("SoH Unknown MS TV %i stopping", c);
+			RDEBUG2("SoH Unknown MS TV %i stopping", c);
 			return 0;
 		}
 	}
@@ -438,14 +437,14 @@ int soh_verify(REQUEST *request, uint8_t const *data, unsigned int data_len) {
 	hdr.tlv_vendor = soh_pull_be_32(data); data += 4;
 
 	if (hdr.tlv_type != 7 || hdr.tlv_vendor != 0x137) {
-		RDEBUG("SoH payload is %i %08x not a ms-vendor packet", hdr.tlv_type, hdr.tlv_vendor);
+		RDEBUG2("SoH payload is %i %08x not a ms-vendor packet", hdr.tlv_type, hdr.tlv_vendor);
 		return -1;
 	}
 
 	hdr.soh_type = soh_pull_be_16(data); data += 2;
 	hdr.soh_len = soh_pull_be_16(data); data += 2;
 	if (hdr.soh_type != 1) {
-		RDEBUG("SoH tlv %04x is not a response", hdr.soh_type);
+		RDEBUG2("SoH tlv %04x is not a response", hdr.soh_type);
 		return -1;
 	}
 
@@ -458,13 +457,13 @@ int soh_verify(REQUEST *request, uint8_t const *data, unsigned int data_len) {
 
 
 	if ((resp.outer_type != 7) || (resp.vendor != 0x137)) {
-		RDEBUG("SoH response outer type %i/vendor %08x not recognised", resp.outer_type, resp.vendor);
+		RDEBUG2("SoH response outer type %i/vendor %08x not recognised", resp.outer_type, resp.vendor);
 		return -1;
 	}
 	switch (resp.inner_type) {
 	case 1:
 		/* no mode sub-header */
-		RDEBUG("SoH without mode subheader");
+		RDEBUG2("SoH without mode subheader");
 		break;
 
 	case 2:
@@ -485,7 +484,7 @@ int soh_verify(REQUEST *request, uint8_t const *data, unsigned int data_len) {
 		break;
 
 	default:
-		RDEBUG("SoH invalid inner type %i", resp.inner_type);
+		RDEBUG2("SoH invalid inner type %i", resp.inner_type);
 		return -1;
 	}
 
@@ -704,7 +703,7 @@ int soh_verify(REQUEST *request, uint8_t const *data, unsigned int data_len) {
 			break;
 
 		default:
-			RDEBUG("SoH Unknown TLV %i len=%i", tlv.tlv_type, tlv.tlv_len);
+			RDEBUG2("SoH Unknown TLV %i len=%i", tlv.tlv_type, tlv.tlv_len);
 			break;
 		}
 

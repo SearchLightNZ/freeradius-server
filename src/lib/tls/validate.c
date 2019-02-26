@@ -35,8 +35,9 @@
 #include <freeradius-devel/util/strerror.h>
 #include <freeradius-devel/util/syserror.h>
 
+#include "attrs.h"
 #include "base.h"
-#include "tls_attrs.h"
+#include "missing.h"
 
 /** Validates a certificate using custom logic
  *
@@ -238,8 +239,8 @@ int tls_validate_cert_cb(int ok, X509_STORE_CTX *x509_ctx)
 	 *	verification if they don't match.
 	 */
 	if (conf->check_cert_issuer && (strcmp(issuer, conf->check_cert_issuer) != 0)) {
-		AUTH("Certificate issuer (%s) does not match specified value (%s)!",
-		     issuer, conf->check_cert_issuer);
+		REDEBUG("Certificate issuer (%s) does not match specified value (%s)!",
+			issuer, conf->check_cert_issuer);
 		my_ok = 0;
 	}
 
@@ -257,8 +258,8 @@ int tls_validate_cert_cb(int ok, X509_STORE_CTX *x509_ctx)
 		} else {
 			RDEBUG2("checking certificate CN (%s) with xlat'ed value (%s)", common_name, cn_str);
 			if (strcmp(cn_str, common_name) != 0) {
-				AUTH("Certificate CN (%s) does not match specified value (%s)!",
-				     common_name, cn_str);
+				REDEBUG("Certificate CN (%s) does not match specified value (%s)!",
+					common_name, cn_str);
 				my_ok = 0;
 			}
 		}
@@ -283,21 +284,21 @@ int tls_validate_cert_cb(int ok, X509_STORE_CTX *x509_ctx)
 #endif
 		fd = mkstemp(filename);
 		if (fd < 0) {
-			RDEBUG("Failed creating file in %s: %s",
-			       conf->verify_tmp_dir, fr_syserror(errno));
+			RDEBUG2("Failed creating file in %s: %s",
+			        conf->verify_tmp_dir, fr_syserror(errno));
 			break;
 		}
 
 		fp = fdopen(fd, "w");
 		if (!fp) {
 			close(fd);
-			RDEBUG("Failed opening file \"%s\": %s", filename, fr_syserror(errno));
+			REDEBUG("Failed opening file \"%s\": %s", filename, fr_syserror(errno));
 			break;
 		}
 
 		if (!PEM_write_X509(fp, cert)) {
 			fclose(fp);
-			RDEBUG("Failed writing certificate to file");
+			REDEBUG("Failed writing certificate to file");
 			goto do_unlink;
 		}
 		fclose(fp);
@@ -311,7 +312,7 @@ int tls_validate_cert_cb(int ok, X509_STORE_CTX *x509_ctx)
 			REDEBUG("Client certificate CN \"%s\" failed external verification", common_name);
 			my_ok = 0;
 		} else {
-			RDEBUG("Client certificate CN \"%s\" passed external validation", common_name);
+			RDEBUG2("Client certificate CN \"%s\" passed external validation", common_name);
 		}
 
 	do_unlink:

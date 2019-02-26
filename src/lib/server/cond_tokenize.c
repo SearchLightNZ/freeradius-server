@@ -74,7 +74,7 @@ next:
 	case COND_TYPE_EXISTS:
 		rad_assert(c->data.vpt != NULL);
 		if (c->cast) {
-			len = snprintf(p, end - p, "<%s>", fr_int2str(fr_value_box_type_names,
+			len = snprintf(p, end - p, "<%s>", fr_int2str(fr_value_box_type_table,
 								      c->cast->type, "??"));
 			p += len;
 		}
@@ -89,7 +89,7 @@ next:
 		*(p++) = '[';	/* for extra-clear debugging */
 #endif
 		if (c->cast) {
-			len = snprintf(p, end - p, "<%s>", fr_int2str(fr_value_box_type_names, c->cast->type, "??"));
+			len = snprintf(p, end - p, "<%s>", fr_int2str(fr_value_box_type_table, c->cast->type, "??"));
 			RETURN_IF_TRUNCATED(p, len, end - p);
 		}
 
@@ -251,14 +251,14 @@ static ssize_t cond_tokenize_word(TALLOC_CTX *ctx, char const *start, char **out
 		 *	things.  For now, we allow pretty much anything.
 		 */
 		if (*p == '\\') {
-			ssize_t slen;
-
 			*error = "Unexpected escape";
 		error:
 			*out = NULL;
-			slen = -(p - start);
-			rad_assert(slen <= 0);	/* For stupidity in clang scan */
-			return slen;
+#ifdef __clang_analyzer__
+			return 0;	/* clang analyzer bug.  Determines p < start in same cases */
+#else
+			return -(p - start);
+#endif
 		}
 
 		/*
@@ -314,7 +314,7 @@ static ssize_t cond_tokenize_cast(char const *start, fr_dict_attr_t const **pda,
 	q = p;
 	while (*q && *q != '>') q++;
 
-	cast = fr_substr2int(fr_value_box_type_names, p, FR_TYPE_INVALID, q - p);
+	cast = fr_substr2int(fr_value_box_type_table, p, FR_TYPE_INVALID, q - p);
 	if (cast == FR_TYPE_INVALID) {
 		*error = "Invalid data type in cast";
 		*pda = NULL;
@@ -561,7 +561,8 @@ static ssize_t cond_tokenize(TALLOC_CTX *ctx, fr_cond_t **pcond, char const **er
 				return_P("Empty octet string is invalid");
 			}
 
-			c->cast = fr_dict_attr_child_by_num(fr_dict_root(fr_dict_internal), FR_CAST_BASE + FR_TYPE_OCTETS);
+			c->cast = fr_dict_attr_child_by_num(fr_dict_root(fr_dict_internal),
+							    FR_CAST_BASE + FR_TYPE_OCTETS);
 		}
 
 		while (isspace((int)*p)) p++; /* skip spaces after LHS */

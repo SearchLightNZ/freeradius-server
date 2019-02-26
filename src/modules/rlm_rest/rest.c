@@ -804,7 +804,7 @@ static int rest_decode_post(UNUSED rlm_rest_t const *instance, UNUSED rlm_rest_s
 		rad_assert(vps);
 
 		RINDENT();
-		RDEBUG3("Type  : %s", fr_int2str(fr_value_box_type_names, da->type, "<INVALID>"));
+		RDEBUG3("Type  : %s", fr_int2str(fr_value_box_type_table, da->type, "<INVALID>"));
 
 		ctx = radius_list_ctx(reference, list_name);
 
@@ -1328,7 +1328,7 @@ static size_t rest_response_header(void *in, size_t size, size_t nmemb, void *us
 		 */
 		q = memchr(p, ' ', s);
 		if (!q) {
-			RDEBUG("Malformed HTTP header: Missing reason code");
+			REDEBUG("Malformed HTTP header: Missing reason code");
 			goto malformed;
 		}
 
@@ -1674,6 +1674,69 @@ error:
 	return -1;
 }
 
+/** Callback to receive debugging data from libcurl
+ *
+ * @note Should only be set on a handle if RDEBUG_ENABLED3 is true.
+ *
+ * @param[in] candle	Curl handle the debugging data pertains to.
+ * @param[in] type	The type of debugging data we received.
+ * @param[in] data	Buffer containing debug data (not \0 terminated).  Despite the
+ *			type being char *, this can be binary data depending on the
+ *			curl_infotype.
+ * @param[in] len	The length of the data in the buffer.
+ * @param[in] uctx	The current request.
+ */
+static int rest_debug_log(UNUSED CURL *candle, curl_infotype type, char *data, size_t len, void *uctx)
+{
+	REQUEST *request = talloc_get_type_abort(uctx, REQUEST);
+
+	switch (type) {
+	case CURLINFO_TEXT:
+		RDEBUG3("libcurl - %pV", fr_box_strvalue_len(data, len));
+		break;
+
+	case CURLINFO_HEADER_IN:
+		if (RDEBUG_ENABLED4) {
+			RHEXDUMP(L_DBG_LVL_4, (uint8_t const *)data, len,
+				 "<<< recv header: %pV", fr_box_strvalue_len(data, len));
+		} else {
+			RDEBUG3("<<< recv header: %pV", fr_box_strvalue_len(data, len));
+		}
+		break;
+
+	case CURLINFO_HEADER_OUT:
+		if (RDEBUG_ENABLED4) {
+			RHEXDUMP(L_DBG_LVL_4, (uint8_t const *)data, len,
+				 ">>> send header: %pV", fr_box_strvalue_len(data, len));
+		} else {
+			RDEBUG3(">>> send header: %pV", fr_box_strvalue_len(data, len));
+		}
+		break;
+
+	case CURLINFO_DATA_IN:
+		RHEXDUMP(L_DBG_LVL_4, (uint8_t const *)data, len, "<<< recv data[length %zu]", len);
+		break;
+
+	case CURLINFO_DATA_OUT:
+		RHEXDUMP(L_DBG_LVL_4, (uint8_t const *)data, len, ">>> send data[length %zu]", len);
+		break;
+
+	case CURLINFO_SSL_DATA_OUT:
+		RHEXDUMP(L_DBG_LVL_4, (uint8_t const *)data, len, ">>> send ssl-data[length %zu]", len);
+		break;
+
+	case CURLINFO_SSL_DATA_IN:
+		RHEXDUMP(L_DBG_LVL_4, (uint8_t const *)data, len, "<<< recv ssl-data[length %zu]", len);
+		break;
+
+	default:
+		RHEXDUMP(L_DBG_LVL_3, (uint8_t const *)data, len, "libcurl - debug data (unknown type %i)", (int)type);
+		break;
+	}
+
+	return 0;
+}
+
 /** Configures request curlopts.
  *
  * Configures libcurl handle setting various curlopts for things like local
@@ -1730,6 +1793,15 @@ int rest_request_config(rlm_rest_t const *inst, rlm_rest_thread_t *t, rlm_rest_s
 	buffer[(sizeof(buffer) - 1)] = '\0';
 
 	/*
+	 *	Set the debugging function if needed
+	 */
+	if (RDEBUG_ENABLED3) {
+		SET_OPTION(CURLOPT_DEBUGFUNCTION, rest_debug_log);
+		SET_OPTION(CURLOPT_DEBUGDATA, request);
+		SET_OPTION(CURLOPT_VERBOSE, 1L);
+	}
+
+	/*
 	 *	Control which HTTP version we're going to use
 	 */
 	if (inst->http_negotiation != CURL_HTTP_VERSION_NONE) SET_OPTION(CURLOPT_HTTP_VERSION, inst->http_negotiation);
@@ -1739,7 +1811,7 @@ int rest_request_config(rlm_rest_t const *inst, rlm_rest_thread_t *t, rlm_rest_s
 	 */
 	SET_OPTION(CURLOPT_URL, uri);
 	if (section->proxy) SET_OPTION(CURLOPT_PROXY, section->proxy);
-	SET_OPTION(CURLOPT_NOSIGNAL, 1);
+	SET_OPTION(CURLOPT_NOSIGNAL, 1L);
 	SET_OPTION(CURLOPT_USERAGENT, "FreeRADIUS " RADIUSD_VERSION_STRING);
 
 	/*
@@ -1754,8 +1826,8 @@ int rest_request_config(rlm_rest_t const *inst, rlm_rest_thread_t *t, rlm_rest_s
 	}
 
 	timeout = fr_pool_timeout(t->pool);
-	DEBUG3("CONNECT TIMEOUT IS %" PRIu64", REQUEST TIMEOUT IS %" PRIu64,
-	       FR_TIMEVAL_TO_MS(&timeout), FR_TIMEVAL_TO_MS(&section->timeout_tv));
+	RDEBUG3("Connect timeout is %" PRIu64", request timeout is %" PRIu64,
+	        FR_TIMEVAL_TO_MS(&timeout), FR_TIMEVAL_TO_MS(&section->timeout_tv));
 	SET_OPTION(CURLOPT_CONNECTTIMEOUT_MS, FR_TIMEVAL_TO_MS(&timeout));
 	SET_OPTION(CURLOPT_TIMEOUT_MS, FR_TIMEVAL_TO_MS(&section->timeout_tv));
 
@@ -1917,9 +1989,9 @@ int rest_request_config(rlm_rest_t const *inst, rlm_rest_thread_t *t, rlm_rest_s
 		SET_OPTION(CURLOPT_RANDOM_FILE, section->tls_random_file);
 	}
 
-	SET_OPTION(CURLOPT_SSL_VERIFYPEER, (section->tls_check_cert == true) ? 1 : 0);
-	SET_OPTION(CURLOPT_SSL_VERIFYHOST, (section->tls_check_cert_cn == true) ? 2 : 0);
-	if (section->tls_extract_cert_attrs) SET_OPTION(CURLOPT_CERTINFO, 1);
+	SET_OPTION(CURLOPT_SSL_VERIFYPEER, (section->tls_check_cert == true) ? 1L : 0L);
+	SET_OPTION(CURLOPT_SSL_VERIFYHOST, (section->tls_check_cert_cn == true) ? 2L : 0L);
+	if (section->tls_extract_cert_attrs) SET_OPTION(CURLOPT_CERTINFO, 1L);
 
 	/*
 	 *	Tell CURL how to get HTTP body content, and how to process incoming data.

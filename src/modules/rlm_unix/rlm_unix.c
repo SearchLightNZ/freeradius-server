@@ -56,7 +56,7 @@ typedef struct {
 } rlm_unix_t;
 
 static const CONF_PARSER module_config[] = {
-	{ FR_CONF_OFFSET("radwtmp", FR_TYPE_FILE_OUTPUT | FR_TYPE_REQUIRED, rlm_unix_t, radwtmp), .dflt = "NULL" },
+	{ FR_CONF_OFFSET("radwtmp", FR_TYPE_FILE_OUTPUT, rlm_unix_t, radwtmp) },
 	CONF_PARSER_TERMINATOR
 };
 
@@ -253,8 +253,7 @@ static rlm_rcode_t CC_HINT(nonnull) mod_authorize(void *instance, UNUSED void *t
 	}
 	endusershell();
 	if (!shell) {
-		RAUTH("[%s]: invalid shell [%s]",
-		       name, pwd->pw_shell);
+		REDEBUG("[%s]: invalid shell [%s]", name, pwd->pw_shell);
 		return RLM_MODULE_REJECT;
 	}
 #endif
@@ -265,7 +264,7 @@ static rlm_rcode_t CC_HINT(nonnull) mod_authorize(void *instance, UNUSED void *t
 	 */
 	if (spwd && spwd->sp_lstchg > 0 && spwd->sp_max >= 0 &&
 	    (request->packet->timestamp.tv_sec / 86400) > (spwd->sp_lstchg + spwd->sp_max)) {
-		RAUTH("[%s]: password has expired", name);
+		REDEBUG("[%s]: password has expired", name);
 		return RLM_MODULE_REJECT;
 	}
 	/*
@@ -273,7 +272,7 @@ static rlm_rcode_t CC_HINT(nonnull) mod_authorize(void *instance, UNUSED void *t
 	 */
 	if (spwd && spwd->sp_expire > 0 &&
 	    (request->packet->timestamp.tv_sec / 86400) > spwd->sp_expire) {
-		RAUTH("[%s]: account has expired", name);
+		REDEBUG("[%s]: account has expired", name);
 		return RLM_MODULE_REJECT;
 	}
 #endif
@@ -284,7 +283,7 @@ static rlm_rcode_t CC_HINT(nonnull) mod_authorize(void *instance, UNUSED void *t
 	 */
 	if ((pwd->pw_expire > 0) &&
 	    (request->packet->timestamp.tv_sec > pwd->pw_expire)) {
-		RAUTH("[%s]: password has expired", name);
+		REDEBUG("[%s]: password has expired", name);
 		return RLM_MODULE_REJECT;
 	}
 #endif
@@ -373,7 +372,7 @@ static rlm_rcode_t CC_HINT(nonnull) mod_accounting(void *instance, UNUSED void *
 	 *	Which type is this.
 	 */
 	if ((vp = fr_pair_find_by_da(request->packet->vps, attr_acct_status_type, TAG_ANY)) == NULL) {
-		RDEBUG("no Accounting-Status-Type attribute in request");
+		RDEBUG2("no Accounting-Status-Type attribute in request");
 		return RLM_MODULE_NOOP;
 	}
 	status = vp->vp_uint32;

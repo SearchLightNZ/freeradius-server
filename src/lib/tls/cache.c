@@ -32,8 +32,10 @@ USES_APPLE_DEPRECATED_API	/* OpenSSL API has been deprecated by Apple */
 #include <freeradius-devel/server/process.h>
 #include <freeradius-devel/server/module.h>
 #include <freeradius-devel/server/rad_assert.h>
+
 #include "base.h"
-#include "tls_attrs.h"
+#include "missing.h"
+#include "attrs.h"
 
 /** Add attributes identifying the TLS session to be acted upon, and the action to be performed
  *
@@ -158,15 +160,10 @@ do { \
  */
 inline static ssize_t tls_cache_id(uint8_t const **out, SSL_SESSION *sess)
 {
-#if OPENSSL_VERSION_NUMBER < 0x10001000L
-	*out = sess->session_id;
-	return sess->session_id_length;
-#else
 	unsigned int len;
 
 	*out = SSL_SESSION_get_id(sess, &len);
 	return len;
-#endif
 }
 
 /** Write a newly created session data to the tls_session structure
@@ -488,7 +485,7 @@ void tls_cache_deny(tls_session_t *session)
 	 *	will be called, so better to remove the session
 	 *	directly.
 	 */
-	SSL_CTX_remove_session(session->ctx, session->ssl_session);
+	SSL_CTX_remove_session(session->ctx, session->session);
 }
 
 /** Prevent a TLS session from being resumed in future
@@ -549,7 +546,7 @@ int tls_cache_disable_cb(SSL *ssl,
 	if (vp && (vp->vp_uint32 == 0)) {
 		RDEBUG2("&control:Allow-Session-Resumption == no, disabling session resumption");
 	disable:
-		SSL_CTX_remove_session(session->ctx, session->ssl_session);
+		SSL_CTX_remove_session(session->ctx, session->session);
 		session->allow_session_resumption = false;
 		return 1;
 	}
@@ -567,6 +564,15 @@ int tls_cache_disable_cb(SSL *ssl,
 void tls_cache_init(SSL_CTX *ctx, bool enabled, uint32_t lifetime)
 {
 	if (!enabled) {
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+		/*
+		 *	This controls the number of stateful or stateless tickets
+		 *	generated with TLS 1.3.  In OpenSSL 1.1.0 it's also
+		 *      required to disable sending session tickets,
+		 *	SSL_SESS_CACHE_OFF is not good enough.
+		 */
+		SSL_CTX_set_num_tickets(ctx, 0);
+#endif
 		SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
 		return;
 	}
@@ -579,6 +585,9 @@ void tls_cache_init(SSL_CTX *ctx, bool enabled, uint32_t lifetime)
 	SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_SERVER | SSL_SESS_CACHE_NO_INTERNAL);
 	SSL_CTX_set_timeout(ctx, lifetime);
 
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+	SSL_CTX_set_num_tickets(ctx, 1);
+#endif
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	SSL_CTX_set_not_resumable_session_callback(ctx, tls_cache_disable_cb);
 #endif

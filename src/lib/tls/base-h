@@ -28,7 +28,7 @@ RCSIDH(tls_h, "$Id$")
 
 #include <freeradius-devel/server/cf_parse.h>
 #include <freeradius-devel/server/tmpl.h>
-#include <freeradius-devel/tls/tls_log.h>
+
 
 /*
  *	This changed in OpenSSL 1.1.0 (they allow deprecated interfaces)
@@ -50,6 +50,8 @@ RCSIDH(tls_h, "$Id$")
 #endif
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+
+#include "log.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,31 +80,6 @@ extern "C" {
 #define FR_TLS_EX_INDEX_TLS_SESSION	(15)
 #define FR_TLS_EX_INDEX_TALLOC		(16)
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-static inline HMAC_CTX *HMAC_CTX_new(void)
-{
-	HMAC_CTX *ctx;
-	ctx = talloc(NULL, HMAC_CTX);
-	HMAC_CTX_init(ctx);
-	return ctx;
-}
-#  define HMAC_CTX_free(_ctx) \
-do {\
-	if (_ctx) {\
-		memset(_ctx, 0, sizeof(*((HMAC_CTX *)(_ctx))));\
-		talloc_free(_ctx);\
-	}\
-} while (0)
-
-#define HMAC_CTX_reset(_x)	HMAC_CTX_cleanup(_x)
-#endif
-
-#if OPENSSL_VERSION_NUMBER < 0x10001000L
-#  define ssl_session ssl->session
-#else
-#  define ssl_session session
-#endif
-
 /*
  *	If we linked with OpenSSL, the application
  *	must remove the thread's error queue before
@@ -110,22 +87,25 @@ do {\
  */
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 #  define FR_TLS_REMOVE_THREAD_STATE()
-#elif OPENSSL_VERSION_NUMBER >= 0x10000000L
-#  define FR_TLS_REMOVE_THREAD_STATE() ERR_remove_thread_state(NULL);
 #else
-#  define FR_TLS_REMOVE_THREAD_STATE() ERR_remove_state(0);
+#  define FR_TLS_REMOVE_THREAD_STATE() ERR_remove_thread_state(NULL);
 #endif
 
 /*
  * FIXME: Dynamic allocation of buffer to overcome FR_TLS_MAX_RECORD_SIZE overflows.
  * 	or configure TLS not to exceed FR_TLS_MAX_RECORD_SIZE.
  */
-typedef struct _tls_record_t {
-	uint8_t data[FR_TLS_MAX_RECORD_SIZE];
-	size_t  used;
+typedef struct {
+	uint8_t		data[FR_TLS_MAX_RECORD_SIZE];
+	size_t 		used;
 } tls_record_t;
 
-typedef struct _tls_info_t {
+typedef enum {
+	TLS_INFO_ORIGIN_RECORD_RECEIVED,
+	TLS_INFO_ORIGIN_RECORD_SENT
+} tls_info_origin_t;
+
+typedef struct {
 	int		origin;
 	int		content_type;
 	uint8_t		handshake_type;
@@ -151,12 +131,10 @@ typedef struct {
  * In the case of EAP-TLS + dependents a #eap_tls_session_t struct is used to track
  * the transfer of TLS records.
  */
-typedef struct _tls_session_t {
+typedef struct {
 	SSL_CTX		*ctx;				//!< TLS configuration context.
 	SSL 		*ssl;				//!< This SSL session.
-#if OPENSSL_VERSION_NUMBER >= 0x10001000L
 	SSL_SESSION	*session;			//!< Session resumption data.
-#endif
 	tls_info_t	info;				//!< Information about the state of the TLS session.
 
 	BIO 		*into_ssl;			//!< Basic I/O input to OpenSSL.
@@ -185,11 +163,10 @@ typedef struct _tls_session_t {
 
 	void		*opaque;			//!< Used to store module specific data.
 
-	struct {
-		unsigned int	count;
-		unsigned int	level;
-		unsigned int	description;
-	} handshake_alert;
+	uint8_t		alerts_sent;
+	bool		pending_alert;
+	uint8_t		pending_alert_level;
+	uint8_t		pending_alert_description;
 } tls_session_t;
 
 #ifdef HAVE_OPENSSL_OCSP_H
@@ -213,7 +190,6 @@ typedef struct {
 } fr_tls_ocsp_conf_t;
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 /** Different chain building modes
  *
  */
@@ -226,7 +202,6 @@ typedef enum {
 							///< the leaf cert back to a root.
 	FR_TLS_CHAIN_VERIFY_NONE			//!< Don't verify/build the chain.
 } fr_tls_chain_verify_mode_t;
-#endif
 
 /** Structure representing a certificate chain configuration
  *
@@ -241,11 +216,9 @@ typedef struct {
 	char const	*password;			//!< Password to decrypt the certificate(s).
 	char const	*private_key_file;		//!< Path to certificate.
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 	char const	**ca_files;			//!< Extra certificates to load.
 	fr_tls_chain_verify_mode_t	verify_mode;	//!< How hard we try to build up a complete certificate
 							///< chain.
-#endif
 	bool		include_root_ca;		//!< Include the root ca in the chain we built.
 } fr_tls_chain_conf_t;
 
@@ -322,10 +295,8 @@ struct fr_tls_conf_t {
 							//!< with ocsp.
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x0090800fL
-#  ifndef OPENSSL_NO_ECDH
+#ifndef OPENSSL_NO_ECDH
 	char const	*ecdh_curve;
-#  endif
 #endif
 
 #ifdef PSK_MAX_IDENTITY_LEN
@@ -336,63 +307,6 @@ struct fr_tls_conf_t {
 };
 
 typedef struct fr_tls_conf_t fr_tls_conf_t;
-
-/*
- *	Following enums from rfc2246
- *
- *	Hmm... since we dpeend on OpenSSL, it would be smarter to
- *	use the OpenSSL names for these.
- */
-enum ContentType {
-	change_cipher_spec = 20,
-	alert = 21,
-	handshake = 22,
-	application_data = 23
-};
-
-enum AlertLevel {
-	warning = 1,
-	fatal = 2
-};
-
-enum AlertDescription {
-	close_notify = 0,
-	unexpected_message = 10,
-	bad_record_mac = 20,
-	decryption_failed = 21,
-	record_overflow = 22,
-	decompression_failure = 30,
-	handshake_failure = 40,
-	bad_certificate = 42,
-	unsupported_certificate = 43,
-	certificate_revoked = 44,
-	certificate_expired = 45,
-	certificate_unknown = 46,
-	illegal_parameter = 47,
-	unknown_ca = 48,
-	access_denied = 49,
-	decode_error = 50,
-	decrypt_error = 51,
-	export_restriction = 60,
-	protocol_version = 70,
-	insufficient_security = 71,
-	internal_error = 80,
-	user_canceled = 90,
-	no_renegotiation = 100
-};
-
-enum HandshakeType {
-	hello_request = 0,
-	client_hello = 1,
-	server_hello = 2,
-	certificate = 11,
-	server_key_exchange  = 12,
-	certificate_request = 13,
-	server_hello_done = 14,
-	certificate_verify = 15,
-	client_key_exchange = 16,
-	handshake_finished = 20
-};
 
 extern int fr_tls_ex_index_vps;
 extern int fr_tls_max_threads;
@@ -522,6 +436,8 @@ int		tls_version_check(char const *acknowledged);
 
 int		tls_init(void);
 
+int		tls_dict_init(void);
+
 void		tls_free(void);
 
 /*
@@ -571,7 +487,7 @@ int 		tls_session_send(REQUEST *request, tls_session_t *tls_session);
 
 int 		tls_session_handshake(REQUEST *request, tls_session_t *tls_session);
 
-int 		tls_session_handshake_alert(REQUEST *request, tls_session_t *tls_session, uint8_t level, uint8_t description);
+int 		tls_session_alert(REQUEST *request, tls_session_t *tls_session, uint8_t level, uint8_t description);
 
 tls_session_t	*tls_session_init_client(TALLOC_CTX *ctx, fr_tls_conf_t *conf);
 

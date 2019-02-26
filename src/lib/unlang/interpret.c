@@ -47,13 +47,13 @@ static void unlang_dump_instruction(REQUEST *request, unlang_t *instruction)
 {
 	RINDENT();
 	if (!instruction) {
-		RDEBUG("instruction = NULL");
+		RDEBUG2("instruction = NULL");
 		REXDENT();
 		return;
 	}
-	RDEBUG("type           %s", unlang_ops[instruction->type].name);
-	RDEBUG("name           %s", instruction->name);
-	RDEBUG("debug_name     %s", instruction->debug_name);
+	RDEBUG2("type           %s", unlang_ops[instruction->type].name);
+	RDEBUG2("name           %s", instruction->name);
+	RDEBUG2("debug_name     %s", instruction->debug_name);
 	REXDENT();
 }
 
@@ -63,15 +63,15 @@ static void unlang_dump_frame(REQUEST *request, unlang_stack_frame_t *frame)
 
 	RINDENT();
 	if (frame->next) {
-		RDEBUG("next           %s", frame->next->debug_name);
+		RDEBUG2("next           %s", frame->next->debug_name);
 	} else {
-		RDEBUG("next           <none>");
+		RDEBUG2("next           <none>");
 	}
-	RDEBUG("top_frame      %s", frame->top_frame ? "yes" : "no");
-	RDEBUG("result         %s", fr_int2str(mod_rcode_table, frame->result, "<invalid>"));
-	RDEBUG("priority       %d", frame->priority);
-	RDEBUG("unwind         %d", frame->unwind);
-	RDEBUG("repeat         %s", frame->repeat ? "yes" : "no");
+	RDEBUG2("top_frame      %s", frame->top_frame ? "yes" : "no");
+	RDEBUG2("result         %s", fr_int2str(mod_rcode_table, frame->result, "<invalid>"));
+	RDEBUG2("priority       %d", frame->priority);
+	RDEBUG2("unwind         %d", frame->unwind);
+	RDEBUG2("repeat         %s", frame->repeat ? "yes" : "no");
 	REXDENT();
 }
 
@@ -81,15 +81,15 @@ static void unlang_dump_stack(REQUEST *request)
 	int i;
 	unlang_stack_t *stack = request->stack;
 
-	RDEBUG("----- Begin stack debug [depth %i] -----", stack->depth);
+	RDEBUG2("----- Begin stack debug [depth %i] -----", stack->depth);
 	for (i = stack->depth; i >= 0; i--) {
 		unlang_stack_frame_t *frame = &stack->frame[i];
 
-		RDEBUG("[%d] Frame contents", i);
+		RDEBUG2("[%d] Frame contents", i);
 		unlang_dump_frame(request, frame);
 	}
 
-	RDEBUG("----- End stack debug [depth %i] -------", stack->depth);
+	RDEBUG2("----- End stack debug [depth %i] -------", stack->depth);
 }
 #define DUMP_STACK if (DEBUG_ENABLED5) unlang_dump_stack(request)
 #else
@@ -471,8 +471,18 @@ static inline unlang_frame_action_t unlang_frame_eval(REQUEST *request, unlang_s
 
 			if (unlang_ops[instruction->type].debug_braces) {
 				REXDENT();
-				RDEBUG2("} # %s (%s)", instruction->debug_name,
-					fr_int2str(mod_rcode_table, *result, "<invalid>"));
+
+				/*
+				 *	If we're at debug level 1, don't emit the closing
+				 *	brace as the opening brace wasn't emitted.
+				 */
+				if (RDEBUG_ENABLED && !RDEBUG_ENABLED2) {
+					RDEBUG("# %s (%s)", instruction->debug_name,
+					       fr_int2str(mod_rcode_table, *result, "<invalid>"));
+				} else {
+					RDEBUG2("} # %s (%s)", instruction->debug_name,
+						fr_int2str(mod_rcode_table, *result, "<invalid>"));
+				}
 			}
 
 			if (unlang_calculate_result(request, frame, result, priority) == UNLANG_FRAME_ACTION_POP) {
@@ -582,8 +592,18 @@ rlm_rcode_t unlang_run(REQUEST *request)
 			 */
 			if (unlang_ops[frame->instruction->type].debug_braces) {
 				REXDENT();
-				RDEBUG2("} # %s (%s)", frame->instruction->debug_name,
-					fr_int2str(mod_rcode_table, stack->result, "<invalid>"));
+
+				/*
+				 *	If we're at debug level 1, don't emit the closing
+				 *	brace as the opening brace wasn't emitted.
+				 */
+				if (RDEBUG_ENABLED && !RDEBUG_ENABLED2) {
+					RDEBUG("# %s (%s)", frame->instruction->debug_name,
+					       fr_int2str(mod_rcode_table, stack->result, "<invalid>"));
+				} else {
+					RDEBUG2("} # %s (%s)", frame->instruction->debug_name,
+						fr_int2str(mod_rcode_table, stack->result, "<invalid>"));
+				}
 			}
 
 			fa = unlang_calculate_result(request, frame, &stack->result, &priority);
